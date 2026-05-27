@@ -27,9 +27,11 @@ class Employee(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     name_kana: Mapped[str | None] = mapped_column(String(64))
-    match_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    # マスター体制表に書かれた「引用名」(短縮名等)。カンマ区切りで複数可
-    # 例: 「古川倫,古川」→ どちらでもマッチ可能
+    # 照合キー: マスター体制表のセル値と照合するための名前。
+    # カンマ区切りで複数指定可能（例: 「大野,大野翔,大野翔一」）。
+    # 最初のキーが主、それ以降は引用名・別名として扱われる。
+    match_key: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    # 旧 reference_name は match_key に統合済み（互換のため残す）
     reference_name: Mapped[str | None] = mapped_column(String(128))
     join_year: Mapped[int | None] = mapped_column(Integer)
     # 入社年の元表記（"M2017", "2016C" 等の記号付きも保持）

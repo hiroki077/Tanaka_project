@@ -59,7 +59,7 @@ class Database:
         self._migrate_add_new_columns()
 
     def _migrate_add_new_columns(self) -> None:
-        """既存DBに新規カラムを追加する（reference_name, join_year_text）。"""
+        """既存DBに新規カラムを追加し、reference_name を match_key に統合する。"""
         with self.engine.connect() as conn:
             rows = conn.exec_driver_sql("PRAGMA table_info(employees)").fetchall()
             existing_cols = {r[1] for r in rows}
@@ -72,6 +72,25 @@ class Database:
                     conn.exec_driver_sql(
                         f"ALTER TABLE employees ADD COLUMN {col_name} {col_type}"
                     )
+            # reference_name の内容を match_key に統合（既存データのマイグレーション）
+            try:
+                pending = conn.exec_driver_sql(
+                    "SELECT id, match_key, reference_name FROM employees "
+                    "WHERE reference_name IS NOT NULL AND reference_name <> ''"
+                ).fetchall()
+                for emp_id, mk, ref in pending:
+                    keys = [k.strip() for k in (mk or "").split(",") if k.strip()]
+                    for r in (ref or "").split(","):
+                        r = r.strip()
+                        if r and r not in keys:
+                            keys.append(r)
+                    merged = ",".join(keys)
+                    conn.exec_driver_sql(
+                        "UPDATE employees SET match_key=?, reference_name=NULL WHERE id=?",
+                        (merged, emp_id),
+                    )
+            except Exception:
+                pass
             conn.commit()
 
     def _migrate_drop_org_columns(self) -> None:
@@ -181,29 +200,25 @@ class EmployeeRepository:
                 stmt = stmt.where(Employee.status == EmploymentStatus.ACTIVE.value)
             all_emps = list(s.scalars(stmt))
 
-        def _ref_names(e):
-            if not e.reference_name:
+        def _match_keys(e):
+            """match_key を CSV 分割して正規化済みリストを返す。"""
+            if not e.match_key:
                 return []
-            return [_normalize_for_match(s) for s in str(e.reference_name).split(",") if s.strip()]
+            return [_normalize_for_match(s) for s in str(e.match_key).split(",") if s.strip()]
 
-        # 1) reference_name 完全一致
-        hits = [e for e in all_emps if target in _ref_names(e)]
+        # 1) match_key（CSV）のいずれかと完全一致
+        hits = [e for e in all_emps if target in _match_keys(e)]
         if hits:
-            return (hits, "reference_name") if return_quality else hits
+            return (hits, "match_key") if return_quality else hits
 
         # 2) name 完全一致
         hits = [e for e in all_emps if _normalize_for_match(e.name or "") == target]
         if hits:
             return (hits, "name") if return_quality else hits
 
-        # 3) match_key 完全一致
-        hits = [e for e in all_emps if _normalize_for_match(e.match_key or "") == target]
-        if hits:
-            return (hits, "match_key") if return_quality else hits
-
-        # 4) name 前方一致 (target が match_key より長い場合のみ。苗字検索の暴発を防ぐ)
-        match_keys = {_normalize_for_match(e.match_key or "") for e in all_emps}
-        if target in match_keys:
+        # 3) name 前方一致 (target が match_key のいずれかと同じ場合は対象外)
+        all_match_keys = {k for e in all_emps for k in _match_keys(e)}
+        if target in all_match_keys:
             return ([], "") if return_quality else []
         hits = [e for e in all_emps if _normalize_for_match(e.name or "").startswith(target)]
         return (hits, "prefix") if return_quality else hits

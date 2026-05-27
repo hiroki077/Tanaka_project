@@ -9,7 +9,7 @@ from PIL import Image, ImageOps
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QDialog, QFormLayout, QVBoxLayout, QHBoxLayout, QLineEdit, QSpinBox,
+    QDialog, QFormLayout, QVBoxLayout, QHBoxLayout, QLineEdit,
     QComboBox, QPushButton, QLabel, QDialogButtonBox, QFileDialog,
     QMessageBox,
 )
@@ -36,14 +36,9 @@ class EmployeeEditDialog(QDialog):
         self.name = QLineEdit()
         self.name_kana = QLineEdit()
         self.match_key = QLineEdit()
-        self.match_key.setPlaceholderText("テンプレに書く文字列（例: 藤堂）")
-        self.reference_name = QLineEdit()
-        self.reference_name.setPlaceholderText("マスター体制表の引用名（複数はカンマ区切り。例: 古川倫,古川）")
-        self.join_year = QSpinBox()
-        self.join_year.setRange(1950, 2100)
-        self.join_year.setValue(2024)
-        self.join_year_text = QLineEdit()
-        self.join_year_text.setPlaceholderText("元表記（例: M2017、2016C など。空欄なら年だけ）")
+        self.match_key.setPlaceholderText("マスター体制表で使う名前。カンマ区切りで複数可（例: 大野,大野翔,大野翔一）")
+        self.join_year = QLineEdit()
+        self.join_year.setPlaceholderText("入社年。記号付きも可（例: 2024、M2017、2019C）")
         self.role = QLineEdit()
         self.role_marks = QLineEdit()
         self.role_marks.setPlaceholderText("☆■◆○▽ などカンマ区切り")
@@ -75,9 +70,7 @@ class EmployeeEditDialog(QDialog):
         form.addRow("氏名（漢字）", self.name)
         form.addRow("氏名（カナ）", self.name_kana)
         form.addRow("照合キー", self.match_key)
-        form.addRow("引用名", self.reference_name)
         form.addRow("入社年", self.join_year)
-        form.addRow("入社年（表記）", self.join_year_text)
         form.addRow("役職", self.role)
         form.addRow("役職記号", self.role_marks)
         form.addRow("雇用区分", self.employment_type)
@@ -115,10 +108,11 @@ class EmployeeEditDialog(QDialog):
         self.name.setText(emp.name or "")
         self.name_kana.setText(emp.name_kana or "")
         self.match_key.setText(emp.match_key or "")
-        self.reference_name.setText(emp.reference_name or "")
-        if emp.join_year:
-            self.join_year.setValue(emp.join_year)
-        self.join_year_text.setText(emp.join_year_text or "")
+        # 入社年は記号付き(join_year_text)があればそれ、なければ4桁年を表示
+        if emp.join_year_text:
+            self.join_year.setText(emp.join_year_text)
+        elif emp.join_year:
+            self.join_year.setText(str(emp.join_year))
         self.role.setText(emp.role or "")
         self.role_marks.setText(emp.role_marks or "")
         self.employment_type.setCurrentText(emp.employment_type or "")
@@ -231,13 +225,33 @@ class EmployeeEditDialog(QDialog):
         self.accept()
 
     def collect(self) -> dict:
+        # 入社年: 入力文字列を解析。数字部分を join_year(int)、
+        # 記号付き全体を join_year_text(str) に保存。
+        year_input = self.join_year.text().strip()
+        year_int: int | None = None
+        year_text: str | None = None
+        if year_input:
+            import re
+            digits = "".join(re.findall(r"\d+", year_input))
+            if digits:
+                try:
+                    n = int(digits)
+                    if n < 100:
+                        n = 1900 + n if n >= 50 else 2000 + n
+                    if 1900 <= n <= 2100:
+                        year_int = n
+                except ValueError:
+                    pass
+            # 入力が「4桁の数字のみ」でなければ表記も保存
+            if not (year_input.isdigit() and len(year_input) == 4):
+                year_text = year_input
         return {
             "name": self.name.text().strip(),
             "name_kana": self.name_kana.text().strip() or None,
             "match_key": self.match_key.text().strip(),
-            "reference_name": self.reference_name.text().strip() or None,
-            "join_year": self.join_year.value(),
-            "join_year_text": self.join_year_text.text().strip() or None,
+            "reference_name": None,  # 統合済み、新規には書き込まない
+            "join_year": year_int,
+            "join_year_text": year_text,
             "role": self.role.text().strip() or None,
             "role_marks": self.role_marks.text().strip() or None,
             "employment_type": self.employment_type.currentText() or None,

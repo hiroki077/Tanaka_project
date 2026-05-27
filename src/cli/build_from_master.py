@@ -246,24 +246,22 @@ def _norm(s: str) -> str:
 
 
 def _learn_reference_name(employee_service, emp, used_name: str) -> None:
-    """マスター体制表で実際にマッチした文字列を、その従業員の引用名として記録する。
+    """マスター体制表でマッチした文字列を、その従業員の照合キーに追加する。
 
     既存の name / match_key と同じ場合は記録しない（冗長を防ぐ）。
-    既存の reference_name と重複する場合も追加しない。
     """
     used = (used_name or "").strip()
     if not used:
         return
-    if used == (emp.name or "") or used == (emp.match_key or ""):
+    if used == (emp.name or ""):
         return
-    current = (emp.reference_name or "").strip()
-    existing_aliases = {s.strip() for s in current.split(",") if s.strip()}
-    if used in existing_aliases:
+    existing_keys = [s.strip() for s in (emp.match_key or "").split(",") if s.strip()]
+    if used in existing_keys:
         return
-    existing_aliases.add(used)
-    new_value = ",".join(sorted(existing_aliases))
+    existing_keys.append(used)
+    new_value = ",".join(existing_keys)
     try:
-        employee_service.update(emp.id, reference_name=new_value)
+        employee_service.update(emp.id, match_key=new_value)
     except Exception:
         pass
 
@@ -625,6 +623,15 @@ def build_workbook(
     wb.remove(wb.active)
 
     for branch in branches:
+        # 中身が空の支店/部署はシートを作らない
+        total_persons = (
+            len(branch.top_positions)
+            + sum(len(cr.persons) for cs in branch.sections.values() for cr in cs)
+            + len(branch.jimu) + len(branch.keiyaku) + len(branch.haken)
+        )
+        if total_persons == 0:
+            continue
+
         sheet_name = _shorten_branch(branch.branch_name)[:31] or "Sheet"
         if sheet_name in wb.sheetnames:
             sheet_name = sheet_name + "_2"
