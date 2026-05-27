@@ -266,6 +266,7 @@ class ImportedEmployee:
     name: str
     name_kana: str | None
     join_year: int | None
+    join_year_text: str | None   # 元表記 (例: "M2017", "2016C")
     source_sheet: str   # 取得元シート名（DBには保存しない、ログ用）
     photo_bytes: bytes
     photo_format: str
@@ -414,6 +415,7 @@ def _scan_text_only_persons(ws, sheet_name: str,
                 name=clean_name,
                 name_kana=kana,
                 join_year=year,
+                join_year_text=None,
                 source_sheet=sheet_name,
                 photo_bytes=b"",
                 photo_format="jpeg",
@@ -492,13 +494,43 @@ def extract_from_sheet(
             if kana:
                 break
 
+        year_text = None
         if kana and anchor_col is not None and kana_row is not None:
-            # 同行の右側で年を探す
-            for c2 in range(anchor_col + 1, anchor_col + 8):
-                v = ws.cell(row=kana_row, column=c2).value
-                y = _parse_year(v) if v is not None else None
+            # 入社年セルの探索: kana_row 同行の左右、および前後の行も含む
+            #   (理由) 記号付き表記が別行に書かれているケースを取りこぼさないため。
+            #          ただし氏名や名前っぽい文字列はスキップする。
+            search_positions = []
+            for dr in (0, -1, 1):  # 同行 → 上 → 下 の順
+                for dc in list(range(1, 9)) + list(range(-1, -5, -1)):
+                    search_positions.append((dr, dc))
+
+            for dr, dc in search_positions:
+                target_col = anchor_col + dc
+                target_row = kana_row + dr
+                if target_col < 1 or target_row < 1:
+                    continue
+                v = ws.cell(row=target_row, column=target_col).value
+                if v is None:
+                    continue
+                raw = str(v).strip()
+                if not raw or len(raw) > 6:
+                    continue
+                # 漢字・カタカナを多く含むものは人名なのでスキップ
+                if any(ord(c) > 0x3000 and not c.isdigit() for c in raw):
+                    # 例外: 和暦記号のみ (H17 等)
+                    if not re.match(r"^[HSRhsr平昭令]\d", raw):
+                        continue
+                y = _parse_year(v)
+                if y is None:
+                    for token in re.findall(r"\d+", raw):
+                        yy = _parse_year(token)
+                        if yy:
+                            y = yy
+                            break
                 if y:
                     year = y
+                    if not (raw.isdigit() and len(raw) == 4):
+                        year_text = raw
                     break
             # 次行で漢字氏名を探す
             for r2 in (kana_row + 1, kana_row + 2):
@@ -538,6 +570,7 @@ def extract_from_sheet(
             name=clean_name,
             name_kana=kana.strip() if kana else None,
             join_year=year,
+            join_year_text=year_text,
             source_sheet=sheet_name,
             photo_bytes=photo_bytes,
             photo_format=fmt,
@@ -581,8 +614,24 @@ def import_workbook(path: Path) -> list[ImportedEmployee]:
     return list(global_keys.values())
 
 
-def commit_to_db(records: list[ImportedEmployee], paths: DataPaths) -> int:
-    """既存DBをクリーンにしてから投入（再投入を想定）。"""
+def _normalize_key(s: str | None) -> str:
+    if not s:
+        return ""
+    return re.sub(r"^[\s　]*兼\s*[)）)）]\s*", "", s).replace("　", "").replace(" ", "").strip()
+
+
+def commit_to_db(
+    records: list[ImportedEmployee],
+    paths: DataPaths,
+    *,
+    replace_photos: bool = False,
+) -> dict:
+    """マージ方式で投入する（既存写真の回転を保持）。
+
+    - 既存従業員 (正規化氏名一致) は **写真を保持** したまま、テキスト項目だけ更新
+    - 新規従業員はそのまま追加
+    - replace_photos=True の場合のみ、写真も上書き（破壊的）
+    """
     import uuid
 
     db = Database(paths.db_path)
@@ -590,31 +639,63 @@ def commit_to_db(records: list[ImportedEmployee], paths: DataPaths) -> int:
     photos = PhotoService(paths.photos_dir)
     service = EmployeeService(db, photos)
 
-    # 既存従業員を全削除（写真ファイルもクリーンアップ）
-    existing = service.list()
-    for emp in existing:
-        service.delete(emp.id)
+    # 既存従業員を正規化氏名でインデックス
+    existing_map: dict[str, object] = {}
+    for emp in service.list():
+        key = _normalize_key(emp.name)
+        if key:
+            existing_map[key] = emp
 
-    inserted = 0
+    stats = {"added": 0, "updated": 0, "photos_kept": 0, "photos_added": 0}
     for rec in records:
-        photo_name = None
-        if rec.photo_bytes:
-            normalized, ext = normalize_image_bytes(rec.photo_bytes, format_hint=rec.photo_format)
-            photo_name = f"{uuid.uuid4().hex}.{ext}"
-            (paths.photos_dir / photo_name).write_bytes(normalized)
+        key = _normalize_key(rec.name)
+        existing = existing_map.get(key)
 
-        emp = service.create(
-            name=rec.name,
-            name_kana=rec.name_kana,
-            match_key=rec.match_key,
-            join_year=rec.join_year,
-            role=rec.role,
-            status="在職",
-        )
-        if photo_name:
-            service.update(emp.id, photo_path=photo_name)
-        inserted += 1
-    return inserted
+        if existing:
+            # テキスト項目を更新（写真は保持）
+            fields = dict(
+                name_kana=rec.name_kana or existing.name_kana,
+                match_key=rec.match_key or existing.match_key,
+                join_year=rec.join_year or existing.join_year,
+                join_year_text=rec.join_year_text or existing.join_year_text,
+                role=rec.role or existing.role,
+            )
+            # 写真: 既存がない or replace_photos=True なら更新
+            if rec.photo_bytes and (replace_photos or not existing.photo_path):
+                normalized, ext = normalize_image_bytes(
+                    rec.photo_bytes, format_hint=rec.photo_format
+                )
+                photo_name = f"{uuid.uuid4().hex}.{ext}"
+                (paths.photos_dir / photo_name).write_bytes(normalized)
+                fields["photo_path"] = photo_name
+                stats["photos_added"] += 1
+            elif existing.photo_path:
+                stats["photos_kept"] += 1
+            service.update(existing.id, **fields)
+            stats["updated"] += 1
+        else:
+            # 新規追加
+            photo_name = None
+            if rec.photo_bytes:
+                normalized, ext = normalize_image_bytes(
+                    rec.photo_bytes, format_hint=rec.photo_format
+                )
+                photo_name = f"{uuid.uuid4().hex}.{ext}"
+                (paths.photos_dir / photo_name).write_bytes(normalized)
+                stats["photos_added"] += 1
+            emp = service.create(
+                name=rec.name,
+                name_kana=rec.name_kana,
+                match_key=rec.match_key,
+                join_year=rec.join_year,
+                join_year_text=rec.join_year_text,
+                role=rec.role,
+                status="在職",
+            )
+            if photo_name:
+                service.update(emp.id, photo_path=photo_name)
+            stats["added"] += 1
+    return stats
 
 
 def main() -> int:
@@ -624,6 +705,8 @@ def main() -> int:
                         help="DBに実投入する（指定なしはドライラン）")
     parser.add_argument("--data-dir", type=Path, default=None,
                         help="データフォルダ（既定: settings.json の data_dir）")
+    parser.add_argument("--replace-photos", action="store_true",
+                        help="既存写真も上書き（既定では回転済み写真を保持）")
     args = parser.parse_args()
 
     if not args.xlsx.is_file():
@@ -657,8 +740,12 @@ def main() -> int:
     print(f"\n📦 DB投入先: {paths.data_dir}")
     print(f"   DB: {paths.db_path}")
     print(f"   写真: {paths.photos_dir}")
-    inserted = commit_to_db(records, paths)
-    print(f"\n✅ {inserted}名を投入しました。")
+    stats = commit_to_db(records, paths, replace_photos=args.replace_photos)
+    print(f"\n✅ 完了")
+    print(f"   新規追加 : {stats['added']}名")
+    print(f"   更新     : {stats['updated']}名 (テキスト項目のみ)")
+    print(f"   写真保持 : {stats['photos_kept']}名 (回転済みなど既存写真を維持)")
+    print(f"   写真追加 : {stats['photos_added']}名")
     return 0
 
 

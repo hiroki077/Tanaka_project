@@ -36,25 +36,11 @@ class ExportTab(QWidget):
         self.settings = settings
 
         layout = QVBoxLayout(self)
-        layout.addWidget(self._build_intro())
         layout.addWidget(self._build_file_group())
         layout.addLayout(self._build_action_bar())
         layout.addWidget(self._build_log_group(), 1)
 
         self._load_defaults()
-
-    def _build_intro(self) -> QLabel:
-        intro = QLabel(
-            "📋 マスター体制表（例: 202605.xlsx）を指定すると、支店ごとに分かれた"
-            "顔写真付きの体制図を自動生成します。\n"
-            "・各支店・部署のシートが自動作成されます\n"
-            "・登録済みの従業員情報・写真が自動配置されます\n"
-            "・写真未登録の人物はプレースホルダー画像で穴埋めされます"
-        )
-        intro.setWordWrap(True)
-        intro.setStyleSheet("padding: 8px; background: #EFF6FB; "
-                            "border: 1px solid #B6D7F0; border-radius: 4px;")
-        return intro
 
     def _build_file_group(self) -> QGroupBox:
         box = QGroupBox("ファイル")

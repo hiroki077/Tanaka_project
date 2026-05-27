@@ -37,9 +37,13 @@ class EmployeeEditDialog(QDialog):
         self.name_kana = QLineEdit()
         self.match_key = QLineEdit()
         self.match_key.setPlaceholderText("テンプレに書く文字列（例: 藤堂）")
+        self.reference_name = QLineEdit()
+        self.reference_name.setPlaceholderText("マスター体制表の引用名（複数はカンマ区切り。例: 古川倫,古川）")
         self.join_year = QSpinBox()
         self.join_year.setRange(1950, 2100)
         self.join_year.setValue(2024)
+        self.join_year_text = QLineEdit()
+        self.join_year_text.setPlaceholderText("元表記（例: M2017、2016C など。空欄なら年だけ）")
         self.role = QLineEdit()
         self.role_marks = QLineEdit()
         self.role_marks.setPlaceholderText("☆■◆○▽ などカンマ区切り")
@@ -71,7 +75,9 @@ class EmployeeEditDialog(QDialog):
         form.addRow("氏名（漢字）", self.name)
         form.addRow("氏名（カナ）", self.name_kana)
         form.addRow("照合キー", self.match_key)
+        form.addRow("引用名", self.reference_name)
         form.addRow("入社年", self.join_year)
+        form.addRow("入社年（表記）", self.join_year_text)
         form.addRow("役職", self.role)
         form.addRow("役職記号", self.role_marks)
         form.addRow("雇用区分", self.employment_type)
@@ -109,8 +115,10 @@ class EmployeeEditDialog(QDialog):
         self.name.setText(emp.name or "")
         self.name_kana.setText(emp.name_kana or "")
         self.match_key.setText(emp.match_key or "")
+        self.reference_name.setText(emp.reference_name or "")
         if emp.join_year:
             self.join_year.setValue(emp.join_year)
+        self.join_year_text.setText(emp.join_year_text or "")
         self.role.setText(emp.role or "")
         self.role_marks.setText(emp.role_marks or "")
         self.employment_type.setCurrentText(emp.employment_type or "")
@@ -227,7 +235,9 @@ class EmployeeEditDialog(QDialog):
             "name": self.name.text().strip(),
             "name_kana": self.name_kana.text().strip() or None,
             "match_key": self.match_key.text().strip(),
+            "reference_name": self.reference_name.text().strip() or None,
             "join_year": self.join_year.value(),
+            "join_year_text": self.join_year_text.text().strip() or None,
             "role": self.role.text().strip() or None,
             "role_marks": self.role_marks.text().strip() or None,
             "employment_type": self.employment_type.currentText() or None,

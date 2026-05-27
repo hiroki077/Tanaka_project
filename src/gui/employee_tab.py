@@ -161,11 +161,12 @@ class EmployeeTab(QWidget):
             item_photo.setIcon(QIcon(pm))
         self.table.setItem(r, 0, item_photo)
 
+        year_display = emp.join_year_text or (str(emp.join_year) if emp.join_year else "")
         values = [
             emp.name or "",
             emp.name_kana or "",
             emp.match_key or "",
-            str(emp.join_year) if emp.join_year else "",
+            year_display,
             emp.role or "",
             emp.employment_type or "",
             emp.status or "",

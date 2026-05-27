@@ -56,6 +56,23 @@ class Database:
     def create_all(self) -> None:
         Base.metadata.create_all(self.engine)
         self._migrate_drop_org_columns()
+        self._migrate_add_new_columns()
+
+    def _migrate_add_new_columns(self) -> None:
+        """既存DBに新規カラムを追加する（reference_name, join_year_text）。"""
+        with self.engine.connect() as conn:
+            rows = conn.exec_driver_sql("PRAGMA table_info(employees)").fetchall()
+            existing_cols = {r[1] for r in rows}
+            new_cols = [
+                ("reference_name", "VARCHAR(128)"),
+                ("join_year_text", "VARCHAR(16)"),
+            ]
+            for col_name, col_type in new_cols:
+                if col_name not in existing_cols:
+                    conn.exec_driver_sql(
+                        f"ALTER TABLE employees ADD COLUMN {col_name} {col_type}"
+                    )
+            conn.commit()
 
     def _migrate_drop_org_columns(self) -> None:
         """旧バージョンで作成されたDBから所属カラムを削除する。
@@ -142,45 +159,54 @@ class EmployeeRepository:
         self,
         text: str,
         only_active: bool = True,
+        return_quality: bool = False,
     ) -> list[Employee]:
         """セル文字列で従業員を引く。
 
-        マッチング戦略（上から順に試行、ヒットしたら終了）:
-        1. 漢字フルネーム または match_key と完全一致
-        2. 「苗字＋名前の一部」での前方一致
-           例: テンプレ "佐藤俊" → DB name "佐藤　俊基" にマッチ
-           ただし target が match_key と同一の場合は前方一致しない（誤検出抑止）
+        マッチング優先順位（高い順）:
+        1. reference_name 完全一致 (引用名で明示的に紐付け)
+        2. name (漢字フルネーム) 完全一致
+        3. match_key (苗字) 完全一致
+        4. name の前方一致 (例: "佐藤俊" → "佐藤　俊基")
 
-        カナ氏名はマッチ対象から除外（漢字と二重マッチを防止）。
-        正規化: 兼務マーカー除去、全角・半角スペース除去。
+        最も優先度の高い結果のみ返す（4段階の中で「最初にヒットした優先度」の候補だけ）。
+        return_quality=True なら (候補, 優先度ラベル) のタプルを返す。
         """
         target = _normalize_for_match(text)
         if not target:
-            return []
+            return [] if not return_quality else ([], "")
         with self.db.session() as s:
             stmt = select(Employee)
             if only_active:
                 stmt = stmt.where(Employee.status == EmploymentStatus.ACTIVE.value)
             all_emps = list(s.scalars(stmt))
 
-        # 1) 完全一致
-        exact = [
-            e for e in all_emps
-            if _normalize_for_match(e.name or "") == target
-            or _normalize_for_match(e.match_key or "") == target
-        ]
-        if exact:
-            return exact
+        def _ref_names(e):
+            if not e.reference_name:
+                return []
+            return [_normalize_for_match(s) for s in str(e.reference_name).split(",") if s.strip()]
 
-        # 2) 前方一致（苗字＋名前の一部）
-        #    target が match_key と同じ場合は対象外（純粋な苗字検索）
+        # 1) reference_name 完全一致
+        hits = [e for e in all_emps if target in _ref_names(e)]
+        if hits:
+            return (hits, "reference_name") if return_quality else hits
+
+        # 2) name 完全一致
+        hits = [e for e in all_emps if _normalize_for_match(e.name or "") == target]
+        if hits:
+            return (hits, "name") if return_quality else hits
+
+        # 3) match_key 完全一致
+        hits = [e for e in all_emps if _normalize_for_match(e.match_key or "") == target]
+        if hits:
+            return (hits, "match_key") if return_quality else hits
+
+        # 4) name 前方一致 (target が match_key より長い場合のみ。苗字検索の暴発を防ぐ)
         match_keys = {_normalize_for_match(e.match_key or "") for e in all_emps}
         if target in match_keys:
-            return []
-        return [
-            e for e in all_emps
-            if _normalize_for_match(e.name or "").startswith(target)
-        ]
+            return ([], "") if return_quality else []
+        hits = [e for e in all_emps if _normalize_for_match(e.name or "").startswith(target)]
+        return (hits, "prefix") if return_quality else hits
 
     def upsert(self, employee: Employee) -> Employee:
         with self.db.session() as s:

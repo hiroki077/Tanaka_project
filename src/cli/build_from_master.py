@@ -245,6 +245,29 @@ def _norm(s: str) -> str:
     return s.replace("　", "").replace(" ", "").strip()
 
 
+def _learn_reference_name(employee_service, emp, used_name: str) -> None:
+    """マスター体制表で実際にマッチした文字列を、その従業員の引用名として記録する。
+
+    既存の name / match_key と同じ場合は記録しない（冗長を防ぐ）。
+    既存の reference_name と重複する場合も追加しない。
+    """
+    used = (used_name or "").strip()
+    if not used:
+        return
+    if used == (emp.name or "") or used == (emp.match_key or ""):
+        return
+    current = (emp.reference_name or "").strip()
+    existing_aliases = {s.strip() for s in current.split(",") if s.strip()}
+    if used in existing_aliases:
+        return
+    existing_aliases.add(used)
+    new_value = ",".join(sorted(existing_aliases))
+    try:
+        employee_service.update(emp.id, reference_name=new_value)
+    except Exception:
+        pass
+
+
 def _shorten_branch(name: str) -> str:
     """シート名として使用可能な形式に整形。
 
@@ -447,23 +470,27 @@ def _draw_person_block(
     label_row_1 = row_start_1 + PHOTO_ROWS
     label_row_2 = label_row_1 + 1
 
-    # カナ氏名 (左半分) + 入社年 (右半分・数値型で書き込み)
+    # カナ氏名 (左半分) + 入社年 (右半分)
     half = max(1, (photo_col_end - col_start_1 + 1) // 2)
     kana = (emp.name_kana if emp else None) or ""
-    year_int: int | None = None
-    y4 = _to_year4(person.year)
-    if y4 and y4.isdigit():
-        year_int = int(y4)
-    elif emp and emp.join_year:
-        year_int = int(emp.join_year)
+
+    # 入社年: DB に元表記 (M2017 等) があればそちらを優先、なければ4桁年
+    year_display: str = ""
+    if emp and emp.join_year_text:
+        year_display = str(emp.join_year_text)
+    else:
+        y4 = _to_year4(person.year)
+        if y4:
+            year_display = y4
+        elif emp and emp.join_year:
+            year_display = str(emp.join_year)
 
     _label_text(ws, label_row_1, col_start_1, col_start_1 + half - 1,
-                kana, size=8, color=COLOR_TEXT_KANA, align="left")
-    if year_int is not None:
-        cell = ws.cell(row=label_row_1, column=col_start_1 + half, value=year_int)
-        cell.font = Font(size=8, color=COLOR_TEXT_YEAR)
+                kana, size=10, color=COLOR_TEXT_KANA, align="left")
+    if year_display:
+        cell = ws.cell(row=label_row_1, column=col_start_1 + half, value=year_display)
+        cell.font = Font(size=10, color=COLOR_TEXT_YEAR)
         cell.alignment = Alignment(horizontal="right", vertical="center")
-        cell.number_format = "0"
         if photo_col_end > col_start_1 + half:
             ws.merge_cells(start_row=label_row_1, start_column=col_start_1 + half,
                            end_row=label_row_1, end_column=photo_col_end)
@@ -472,7 +499,7 @@ def _draw_person_block(
     name = emp.name if emp else person.name
     display = (person.marks or "") + name
     _label_text(ws, label_row_2, col_start_1, photo_col_end,
-                display, size=10, bold=True, color=COLOR_TEXT_KANJI, align="center")
+                display, size=11, bold=True, color=COLOR_TEXT_KANJI, align="center")
 
 
 def _determine_leader_label(section_name: str, leader: PersonEntry) -> str:
@@ -563,11 +590,23 @@ def build_workbook(
 ) -> tuple[Workbook, dict]:
     stats = {"placed": 0, "unmatched": [], "on_leave": []}
 
+    stats["ambiguous"] = []   # 曖昧マッチ（複数候補）
+
     def lookup(name: str):
-        # repository の find_by_text を使う（完全一致 + 前方一致対応）
-        candidates_active = employee_service.repo.find_by_text(name, only_active=True)
+        candidates_active, quality = employee_service.repo.find_by_text(
+            name, only_active=True, return_quality=True
+        )
         if candidates_active:
-            emp = candidates_active[0]
+            if len(candidates_active) == 1:
+                emp = candidates_active[0]
+                # 曖昧でない時のみ引用名を自動学習
+                if quality != "reference_name":
+                    _learn_reference_name(employee_service, emp, name)
+            else:
+                # 複数候補 → 1人目を採用するが警告ログに記録
+                emp = candidates_active[0]
+                cand_names = ", ".join(c.name for c in candidates_active[:5])
+                stats["ambiguous"].append(f"{name!r} → {len(candidates_active)}候補 [{cand_names}] (1人目採用)")
             photo_path = photo_service.resolve(emp.photo_path)
             if photo_path:
                 stats["placed"] += 1
@@ -715,6 +754,11 @@ def main() -> int:
     if stats['unmatched']:
         print(f"    {sorted(set(stats['unmatched']))[:15]}")
     print(f"  休職中  : {len(stats['on_leave'])}名")
+    if stats.get('ambiguous'):
+        print(f"\n⚠ 曖昧マッチ (複数候補から1人目採用): {len(stats['ambiguous'])}件")
+        for line in stats['ambiguous'][:10]:
+            print(f"   - {line}")
+        print(f"   → 該当者の引用名(reference_name)を GUI で設定すると、確実にマッチします")
     print(f"\n✅ 出力完了: {args.output}")
     return 0
 
