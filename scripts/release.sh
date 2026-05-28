@@ -18,7 +18,8 @@ set -euo pipefail
 
 REPO_OWNER="hiroki077"
 REPO_NAME="Tanaka_project"
-ARTIFACT_NAME="MikiApp-windows-exe"
+RELEASE_TAG="latest"
+EXE_ASSET_NAME="MikiApp.exe"
 
 INCLUDE_DATA=true
 for arg in "$@"; do
@@ -45,29 +46,21 @@ ZIP_PATH="dist/MikiApp_配布版_${TIMESTAMP}.zip"
 
 mkdir -p "$DIST_DIR"
 
-echo "📥 GitHub Actions から最新の Windows EXE をダウンロードします..."
-LATEST_RUN_ID="$(gh run list --repo "$REPO_OWNER/$REPO_NAME" \
-  --workflow build-windows-exe.yml --status success \
-  --limit 1 --json databaseId --jq '.[0].databaseId')"
-
-if [[ -z "$LATEST_RUN_ID" ]]; then
-  echo "❌ 成功したビルドが見つかりません。" >&2
-  echo "   ブラウザで Actions タブを確認してください:" >&2
-  echo "   https://github.com/$REPO_OWNER/$REPO_NAME/actions" >&2
-  exit 1
-fi
-
-echo "   ビルドID: $LATEST_RUN_ID"
-gh run download "$LATEST_RUN_ID" \
+echo "📥 GitHub Release から最新の Windows EXE をダウンロードします..."
+gh release download "$RELEASE_TAG" \
   --repo "$REPO_OWNER/$REPO_NAME" \
-  --name "$ARTIFACT_NAME" \
-  --dir "$DIST_DIR"
+  --pattern "$EXE_ASSET_NAME" \
+  --dir "$DIST_DIR" \
+  --clobber
 
-if [[ ! -f "$DIST_DIR/MikiApp.exe" ]]; then
+if [[ ! -f "$DIST_DIR/$EXE_ASSET_NAME" ]]; then
   echo "❌ MikiApp.exe のダウンロードに失敗しました。" >&2
+  echo "   ブラウザで Releases を確認してください:" >&2
+  echo "   https://github.com/$REPO_OWNER/$REPO_NAME/releases" >&2
   exit 1
 fi
-EXE_SIZE="$(du -h "$DIST_DIR/MikiApp.exe" | awk '{print $1}')"
+
+EXE_SIZE="$(du -h "$DIST_DIR/$EXE_ASSET_NAME" | awk '{print $1}')"
 echo "✅ MikiApp.exe ダウンロード完了 ($EXE_SIZE)"
 
 # データフォルダの同梱

@@ -1,6 +1,8 @@
 # 配布手順 (Mac から Windows 用 EXE をリリース)
 
-Mac では Windows の `.exe` を直接ビルドできないため、**GitHub Actions の Windows ランナーでビルドし、その成果物 (artifact) を Mac でダウンロードしてDBと一緒に zip 化** する流れにしています。
+Mac では Windows の `.exe` を直接ビルドできないため、**GitHub Actions の Windows ランナーでビルドし、GitHub Release として公開、Mac でダウンロードしてDBと一緒に zip 化** する流れにしています。
+
+Artifact ではなく Release を使うことで、ストレージ上限を気にせず長期保管できます。
 
 ## 全体の流れ
 

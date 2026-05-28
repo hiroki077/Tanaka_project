@@ -10,6 +10,9 @@ on:
       - '.github/workflows/build-windows-exe.yml'
   workflow_dispatch:  # 手動実行も可能
 
+permissions:
+  contents: write   # GitHub Release を作成するために必要
+
 jobs:
   build:
     runs-on: windows-latest
@@ -50,9 +53,33 @@ jobs:
             exit 1
           }
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - name: Generate release tag
+        id: tag
+        shell: bash
+        run: |
+          TAG="build-$(date +%Y%m%d-%H%M%S)-${GITHUB_SHA:0:7}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Delete previous "latest" release (keep only the newest)
+        continue-on-error: true
+        run: |
+          gh release delete latest --yes --cleanup-tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create GitHub Release (latest)
+        uses: softprops/action-gh-release@v2
         with:
-          name: MikiApp-windows-exe
-          path: dist/MikiApp.exe
-          retention-days: 30
+          tag_name: latest
+          name: "Latest Windows EXE Build"
+          body: |
+            自動ビルドされた Windows 実行ファイル
+
+            - ビルド日時: ${{ github.event.head_commit.timestamp }}
+            - コミット: ${{ github.sha }}
+            - ファイル: `MikiApp.exe`
+
+            ダウンロードして直接実行できます。
+          files: dist/MikiApp.exe
+          prerelease: false
+          make_latest: true
