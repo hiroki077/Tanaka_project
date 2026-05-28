@@ -273,7 +273,7 @@ Miki_application/
 
 - `PyInstaller --onefile --windowed --icon=app.ico src/main.py` で単一.exe生成
 - DB（employees.db）と photos/ フォルダはアプリと同階層に配置（書き込み可能な場所）
-- 初回起動時にユーザーフォルダ配下（`%APPDATA%/MikiApp/`）にDBとphotosを自動展開する方式を採用
+- 初回起動時にユーザーフォルダ配下（`%APPDATA%/Roster/`）にDBとphotosを自動展開する方式を採用
 
 ## 11. 開発ステップ
 

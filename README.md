@@ -69,10 +69,10 @@ Windows 環境で以下を実行:
 
 ```bash
 pip install pyinstaller
-pyinstaller --onefile --windowed --name MikiApp --icon=app.ico src/main.py
+pyinstaller --onefile --windowed --name Roster --icon=app.ico src/main.py
 ```
 
-`dist/MikiApp.exe` が生成されます（単一ファイル、Python 不要）。
+`dist/Roster.exe` が生成されます（単一ファイル、Python 不要）。
 
 ### PyInstaller 注意点
 - macOS/Linux でビルドしたバイナリは Windows で動きません（クロスビルド不可）

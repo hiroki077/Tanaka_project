@@ -33,7 +33,7 @@ pip install pyinstaller
 pyinstaller `
   --onefile `
   --windowed `
-  --name MikiApp `
+  --name Roster `
   --icon=app.ico `
   --collect-all PySide6 `
   src/main.py
@@ -44,25 +44,25 @@ pyinstaller `
 - `--windowed`: コンソール窓を表示しない（GUI専用アプリのため）
 - `--collect-all PySide6`: PySide6 の Qt プラグインを漏れなく同梱
 
-成功すると `dist\MikiApp.exe` が生成されます。
+成功すると `dist\Roster.exe` が生成されます。
 
 ### 4. 動作確認
 
 ```powershell
-.\dist\MikiApp.exe
+.\dist\Roster.exe
 ```
 
 初回起動でデータフォルダ選択ダイアログが出ることを確認。
 
 ## 配布
 
-`dist\MikiApp.exe` 1ファイルを社内共有（OneDrive、メール、USB等）すれば配布完了です。
+`dist\Roster.exe` 1ファイルを社内共有（OneDrive、メール、USB等）すれば配布完了です。
 
 ### 推奨配布構成
 
 ```
-MikiApp配布用/
-├── MikiApp.exe        # 実行ファイル
+Roster配布用/
+├── Roster.exe        # 実行ファイル
 ├── README.txt         # 利用者向け簡易マニュアル
 └── 初期データ/         # （任意）初期写真フォルダ
 ```
@@ -88,7 +88,7 @@ MikiApp配布用/
 1. ソースを更新
 2. `dist/` と `build/` を削除
 3. 上記手順3を再実行
-4. 新しい `MikiApp.exe` を配布
+4. 新しい `Roster.exe` を配布
 
 ## クロスビルドについて
 

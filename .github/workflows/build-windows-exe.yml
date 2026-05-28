@@ -38,7 +38,7 @@ jobs:
           pyinstaller `
             --onefile `
             --windowed `
-            --name MikiApp `
+            --name Roster `
             --add-data "assets;assets" `
             --collect-all PySide6 `
             --hidden-import src `
@@ -66,11 +66,11 @@ jobs:
 
       - name: Verify build
         run: |
-          if (Test-Path dist/MikiApp.exe) {
-            $size = (Get-Item dist/MikiApp.exe).Length / 1MB
-            Write-Host "✅ MikiApp.exe built: $($size.ToString('0.0')) MB"
+          if (Test-Path dist/Roster.exe) {
+            $size = (Get-Item dist/Roster.exe).Length / 1MB
+            Write-Host "✅ Roster.exe built: $($size.ToString('0.0')) MB"
           } else {
-            Write-Error "MikiApp.exe not found"
+            Write-Error "Roster.exe not found"
             exit 1
           }
 
@@ -98,9 +98,9 @@ jobs:
 
             - ビルド日時: ${{ github.event.head_commit.timestamp }}
             - コミット: ${{ github.sha }}
-            - ファイル: `MikiApp.exe`
+            - ファイル: `Roster.exe`
 
             ダウンロードして直接実行できます。
-          files: dist/MikiApp.exe
+          files: dist/Roster.exe
           prerelease: false
           make_latest: true

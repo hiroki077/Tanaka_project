@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 
-APP_NAME = "MikiApp"
+APP_NAME = "Roster"
 
 DEFAULT_PHOTO_WIDTH_COLS = 4
 DEFAULT_PHOTO_HEIGHT_ROWS = 6
