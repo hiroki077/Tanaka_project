@@ -41,7 +41,28 @@ jobs:
             --name MikiApp `
             --add-data "assets;assets" `
             --collect-all PySide6 `
-            src/main.py
+            --hidden-import src `
+            --hidden-import src.main `
+            --hidden-import src.config `
+            --hidden-import src.db `
+            --hidden-import src.db.models `
+            --hidden-import src.db.repository `
+            --hidden-import src.services `
+            --hidden-import src.services.employee_service `
+            --hidden-import src.services.photo_service `
+            --hidden-import src.services.excel_export_service `
+            --hidden-import src.gui `
+            --hidden-import src.gui.main_window `
+            --hidden-import src.gui.employee_tab `
+            --hidden-import src.gui.export_tab `
+            --hidden-import src.gui.dialogs `
+            --hidden-import src.gui.dialogs.employee_edit_dialog `
+            --hidden-import src.gui.dialogs.ambiguity_dialog `
+            --hidden-import src.lock `
+            --hidden-import src.cli `
+            --hidden-import src.cli.build_from_master `
+            --paths . `
+            app.py
 
       - name: Verify build
         run: |
