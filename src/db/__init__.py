@@ -1,5 +1,10 @@
 from .models import Base, Employee, MappingOverride, OutputHistory, EmploymentStatus
-from .repository import Database, EmployeeRepository, MappingOverrideRepository
+from .repository import (
+    Database,
+    EmployeeRepository,
+    MappingOverrideRepository,
+    strip_name_prefix_marks,
+)
 
 __all__ = [
     "Base",
@@ -10,4 +15,5 @@ __all__ = [
     "Database",
     "EmployeeRepository",
     "MappingOverrideRepository",
+    "strip_name_prefix_marks",
 ]

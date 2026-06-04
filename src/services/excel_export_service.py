@@ -12,6 +12,7 @@ from openpyxl.drawing.image import Image as XLImage
 from openpyxl.drawing.spreadsheet_drawing import (
     AnchorMarker, TwoCellAnchor,
 )
+from openpyxl.styles import Alignment
 from openpyxl.utils.cell import coordinate_from_string, column_index_from_string
 from PIL import Image as PILImage
 
@@ -21,7 +22,13 @@ from ..config import (
     DEFAULT_PHOTO_OFFSET_ROWS_UP,
     PLACEHOLDER_PATTERN,
 )
-from ..db import Database, Employee, EmploymentStatus, MappingOverrideRepository
+from ..db import (
+    Database,
+    Employee,
+    EmploymentStatus,
+    MappingOverrideRepository,
+    strip_name_prefix_marks,
+)
 from ..services.employee_service import EmployeeService
 from ..services.photo_service import PhotoService
 
@@ -85,6 +92,22 @@ def first_candidate_resolver(ambiguous: AmbiguousMatch) -> Employee | None:
 
 def skip_resolver(ambiguous: AmbiguousMatch) -> Employee | None:
     return None
+
+
+def _enable_shrink_to_fit(cell) -> None:
+    """既存の Alignment 設定を維持したまま shrink_to_fit のみ True にする。"""
+    a = cell.alignment
+    cell.alignment = Alignment(
+        horizontal=a.horizontal,
+        vertical=a.vertical,
+        text_rotation=a.text_rotation,
+        wrap_text=False,  # shrink_to_fit と wrap_text は排他
+        shrink_to_fit=True,
+        indent=a.indent,
+        relativeIndent=a.relativeIndent,
+        justifyLastLine=a.justifyLastLine,
+        readingOrder=a.readingOrder,
+    )
 
 
 def _file_hash(path: Path) -> str:
@@ -208,6 +231,10 @@ class ExcelExportService:
                     self._insert_photo(
                         ws, cell.coordinate, emp, opts, anchor_at_cell=False
                     )
+                    cleaned = strip_name_prefix_marks(str(cell.value))
+                    if cleaned != str(cell.value):
+                        cell.value = cleaned
+                    _enable_shrink_to_fit(cell)
                     result.photos_inserted += 1
 
     def _resolve_detail_key(self, raw_key: str) -> Employee | list[Employee] | None:

@@ -1,4 +1,7 @@
 from __future__ import annotations
+import re
+import shutil
+import zipfile
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QSize
@@ -12,6 +15,15 @@ from PySide6.QtWidgets import (
 from ..db import EmploymentStatus
 from ..services import EmployeeService, PhotoService
 from .dialogs.employee_edit_dialog import EmployeeEditDialog
+from .dialogs.photo_crop_dialog import PhotoCropDialog
+
+
+_FILENAME_INVALID_RE = re.compile(r'[\\/:*?"<>|]')
+
+
+def _safe_filename(name: str) -> str:
+    cleaned = _FILENAME_INVALID_RE.sub("_", name).strip()
+    return cleaned or "photo"
 
 
 THUMB_SIZE = QSize(48, 60)
@@ -75,7 +87,7 @@ class EmployeeTab(QWidget):
         self.table.setHorizontalHeaderLabels([c[0] for c in self.COLUMNS])
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setIconSize(THUMB_SIZE)
         for i, (_, w) in enumerate(self.COLUMNS):
@@ -90,9 +102,11 @@ class EmployeeTab(QWidget):
             ("新規追加", self._on_add),
             ("編集", self._on_edit),
             ("写真変更", self._on_change_photo),
+            ("✂ トリミング", self._on_crop),
             ("↺ 左90°", lambda: self._on_rotate(-90)),
             ("↻ 右90°", lambda: self._on_rotate(90)),
             ("⤺ 180°", lambda: self._on_rotate(180)),
+            ("📥 写真DL", self._on_download_photos),
             ("削除", self._on_delete),
         ]:
             btn = QPushButton(label)
@@ -182,6 +196,117 @@ class EmployeeTab(QWidget):
             return None
         item = self.table.item(row, 0)
         return item.data(Qt.UserRole) if item else None
+
+    def _selected_employee_ids(self) -> list[int]:
+        ids: list[int] = []
+        seen: set[int] = set()
+        for idx in self.table.selectionModel().selectedRows():
+            item = self.table.item(idx.row(), 0)
+            if item is None:
+                continue
+            emp_id = item.data(Qt.UserRole)
+            if emp_id is not None and emp_id not in seen:
+                seen.add(emp_id)
+                ids.append(emp_id)
+        return ids
+
+    def _on_crop(self) -> None:
+        emp_id = self._selected_employee_id()
+        if emp_id is None:
+            QMessageBox.information(self, "選択なし", "トリミングする従業員を選択してください。")
+            return
+        emp = self.employee_service.get(emp_id)
+        if emp is None:
+            return
+        src = self.photo_service.resolve(emp.photo_path)
+        if src is None:
+            QMessageBox.information(self, "写真なし", "この従業員には写真が登録されていません。")
+            return
+        dlg = PhotoCropDialog(self, source_path=src)
+        if dlg.exec() != PhotoCropDialog.Accepted or dlg.output_path is None:
+            return
+        try:
+            self.employee_service.set_photo(emp_id, str(dlg.output_path))
+        except Exception as e:
+            QMessageBox.critical(self, "保存失敗", str(e))
+            return
+        finally:
+            try:
+                dlg.output_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+        self.refresh()
+
+    def _on_download_photos(self) -> None:
+        emp_ids = self._selected_employee_ids()
+        if not emp_ids:
+            QMessageBox.information(self, "選択なし", "ダウンロードする従業員を選択してください。")
+            return
+        if len(emp_ids) == 1:
+            self._download_single(emp_ids[0])
+        else:
+            self._download_zip(emp_ids)
+
+    def _download_single(self, emp_id: int) -> None:
+        emp = self.employee_service.get(emp_id)
+        if emp is None:
+            return
+        src = self.photo_service.resolve(emp.photo_path)
+        if src is None:
+            QMessageBox.information(self, "写真なし", f"{emp.name} には写真が登録されていません。")
+            return
+        default_name = f"{_safe_filename(emp.name or 'photo')}{src.suffix}"
+        dest, _ = QFileDialog.getSaveFileName(
+            self, "写真の保存先",
+            str(Path.home() / default_name),
+            f"画像ファイル (*{src.suffix})",
+        )
+        if not dest:
+            return
+        try:
+            shutil.copyfile(src, dest)
+        except Exception as e:
+            QMessageBox.critical(self, "保存失敗", str(e))
+            return
+        QMessageBox.information(self, "保存完了", f"保存しました:\n{dest}")
+
+    def _download_zip(self, emp_ids: list[int]) -> None:
+        dest, _ = QFileDialog.getSaveFileName(
+            self, "ZIP の保存先",
+            str(Path.home() / "photos.zip"),
+            "ZIP ファイル (*.zip)",
+        )
+        if not dest:
+            return
+        skipped: list[str] = []
+        added = 0
+        used_names: set[str] = set()
+        try:
+            with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
+                for emp_id in emp_ids:
+                    emp = self.employee_service.get(emp_id)
+                    if emp is None:
+                        continue
+                    src = self.photo_service.resolve(emp.photo_path)
+                    if src is None:
+                        skipped.append(emp.name or f"id={emp_id}")
+                        continue
+                    base = _safe_filename(emp.name or f"id_{emp_id}")
+                    arcname = f"{base}{src.suffix}"
+                    n = 2
+                    while arcname in used_names:
+                        arcname = f"{base}_{n}{src.suffix}"
+                        n += 1
+                    used_names.add(arcname)
+                    zf.write(src, arcname=arcname)
+                    added += 1
+        except Exception as e:
+            QMessageBox.critical(self, "ZIP 保存失敗", str(e))
+            return
+        msg = f"{added} 件を保存しました:\n{dest}"
+        if skipped:
+            msg += f"\n\n写真未登録のためスキップ:\n - " + "\n - ".join(skipped)
+        QMessageBox.information(self, "保存完了", msg)
 
     def _on_add(self) -> None:
         dlg = EmployeeEditDialog(self, employee=None, photo_service=self.photo_service)

@@ -12,14 +12,31 @@ from .models import Base, Employee, MappingOverride, OutputHistory, EmploymentSt
 
 _CONCURRENT_PREFIX_RE = re.compile(r"^[\s　]*兼\s*[)）)）]\s*")
 
+# 役職/区分マークとして氏名先頭に付くことがある記号類。
+# テンプレに `＊田中 秀明` のように書かれていても、本人として照合できるように
+# マッチ時の正規化と出力時のセル整形で剥がす。
+NAME_PREFIX_MARK_CHARS = "＊*☆★○●◎◯◇◆△▲▽▼ＣCＭM"
+_NAME_PREFIX_MARK_RE = re.compile(
+    rf"^[\s　]*[{re.escape(NAME_PREFIX_MARK_CHARS)}]+[\s　]*"
+)
+
+
+def strip_name_prefix_marks(s: str) -> str:
+    """氏名セル先頭の役職/区分マーク（＊☆○Ｃ等）を 1 回剥がす。"""
+    if not s:
+        return s
+    return _NAME_PREFIX_MARK_RE.sub("", s)
+
 
 def _normalize_for_match(s: str) -> str:
     """テンプレと DB のテキストを照合用に正規化。
 
     - 兼務プレフィックス「兼）」「兼)」等を除去（テンプレに残っていても DB と一致）
+    - 役職マーク「＊」「☆」「○」「Ｃ」等の先頭記号を除去
     - 全角・半角スペースを除去
     """
     s = _CONCURRENT_PREFIX_RE.sub("", s)
+    s = strip_name_prefix_marks(s)
     return s.replace("　", "").replace(" ", "").strip()
 
 
