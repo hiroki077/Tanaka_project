@@ -224,8 +224,10 @@ SPACER_ROWS = 1
 # 列構成: col A = 左マージン, col B 以降 = 等幅, person 1 は col C 開始
 SHEET_START_COL = 3   # col C
 MARGIN_COL_WIDTH = 2.625
-UNIFORM_COL_WIDTH = 13.0
-DATA_COL_END = 70     # 全体枠の右端列 (= 列 BR)
+UNIFORM_COL_WIDTH = 3.0   # 依頼ファイル準拠だと 13.0 で広すぎ → 画面表示用に縮小
+# タイトル/印刷範囲。派遣社員等を含む横長行で最大 10 人配置されるケース
+# (slot 9 = col 57) があるためそれをカバーする。
+DATA_COL_END = 60
 
 # 行高
 TITLE_ROW_HEIGHT = 50.25
@@ -312,9 +314,15 @@ def _to_year4(raw) -> str | None:
 
 
 def _setup_sheet(ws) -> None:
-    """列幅: col A は左マージン (2.625)、col B 以降は等幅 (13.0)。"""
+    """列幅: col A は左マージン (2.625)、col B 以降は等幅。
+
+    派遣/契約社員などで人物が DATA_COL_END を超える列まで配置されることが
+    あるので、設定範囲は十分広く取る（人物 13 スロット + バッファ）。
+    """
     ws.column_dimensions["A"].width = MARGIN_COL_WIDTH
-    for c in range(2, DATA_COL_END + 1):
+    # スロット 13 (col 3 + 13*6 = col 81) まで対応
+    max_col = max(DATA_COL_END, 85)
+    for c in range(2, max_col + 1):
         ws.column_dimensions[get_column_letter(c)].width = UNIFORM_COL_WIDTH
 
 
