@@ -47,7 +47,7 @@ HOLIDAY_COL = 39          # AM: 休職中（写真は不要だが情報として
 BRANCH_RE = re.compile(r"^(集合|《本部スタッフ》|技術部|事業推進部)")
 EXCLUDE_BRANCH_RE = re.compile(r"^(本部長|本部長・部長|本部長・部長・支店長)")
 SECTION_RE = re.compile(r"^[●○]\s*(.+)")
-ROLE_MARK_CHARS = "＊*☆■◆○◯〇▽●◎▲△□"
+ROLE_MARK_CHARS = "＊*☆★■◆○◯〇▽▼●◎▲△□"
 ROLE_MARK_RE = re.compile(rf"^([{ROLE_MARK_CHARS}]+)?(.+)$")
 
 # 名前末尾に付く役職/契約区分マーカー (M=マネージャー、C=契約 など)
@@ -205,38 +205,54 @@ def parse_master(path: Path) -> list[BranchData]:
 
 
 # ============================================================
-# 出力レイアウト
+# 出力レイアウト （202605_顔写真版_修正依頼0605.xlsx 仕様 準拠）
 # ============================================================
-PERSON_COL_W = 6     # 1人あたりの幅（列数）。区切り1列含む
-PHOTO_ROWS = 8       # 写真の高さ（行数）
-LABEL_ROWS = 2       # 写真直下のラベル行数 (kana+year / kanji)
-LEADER_LABEL_ROWS = 1  # 課長/室長 役職ラベル用の上段行
-PERSON_TOTAL_H = LEADER_LABEL_ROWS + PHOTO_ROWS + LABEL_ROWS + 1  # 課行の総高さ
+FONT_NAME = "Meiryo UI"
 
-LEFT_LABEL_COLS = 7  # 「マーケティング室」「不動産事業推進室」が収まる幅
-SHEET_START_COL = 1
-DATA_COL_END = 75   # 全体枠の右端列（左ラベル拡大に伴い若干広げる）
+PERSON_COL_W = 6      # 1人スロット = 5列(content) + 1列(gap)
+PHOTO_ROWS = 8        # 写真の高さ（行数）
+LABEL_ROWS = 3        # ラベル3行: カナ / 漢字 / 年
+LEADER_LABEL_ROWS = 1
+PERSON_TOTAL_H = LEADER_LABEL_ROWS + PHOTO_ROWS + LABEL_ROWS + 1
 
-UNIFORM_COL_WIDTH = 2.6   # 1列の幅（小さく刻む）
-PHOTO_ROW_HEIGHT = 15.0   # 写真領域の行高
-LABEL_ROW_HEIGHT = 14.0
-HEADER_ROW_HEIGHT = 24.0
+# サブセクション/役職ラベル用の縦方向間隔
+SECTION_HEADER_ROWS = 1
+SUBSECTION_ROWS = 1
+ROLE_LABEL_ROWS = 1
+SPACER_ROWS = 1
 
-# カラーパレット（スクリーンショット準拠）
-COLOR_TITLE_BG = "1F4E79"   # 濃紺（タイトル）
-COLOR_LABEL_BG = "2E7D5B"   # ティール緑（役職・セクションラベル）
-COLOR_LABEL_BORDER = "1B5E40"  # ラベル枠
-COLOR_OUTER_BORDER = "1F4E79"  # 全体外枠（濃紺）
-COLOR_CELL_BORDER = "9DB7D9"   # 内部薄罫線
+# 列構成: col A = 左マージン, col B 以降 = 等幅, person 1 は col C 開始
+SHEET_START_COL = 3   # col C
+MARGIN_COL_WIDTH = 2.625
+UNIFORM_COL_WIDTH = 13.0
+DATA_COL_END = 70     # 全体枠の右端列 (= 列 BR)
+
+# 行高
+TITLE_ROW_HEIGHT = 50.25
+TOP_HEADER_HEIGHT = 20.25     # 支店長/支店付 ラベル行
+SECTION_HEADER_HEIGHT = 19.5  # 「営 業 課」「設 計 課」
+SUBSECTION_HEIGHT = 19.5      # 「営業1課」「営業2課」
+ROLE_LABEL_HEIGHT = 19.5      # 「課長」「課長代務」
+SPACER_HEIGHT = 6.0           # ラベル間のスペーサー行
+PHOTO_ROW_HEIGHT = 15.0
+LABEL_ROW_HEIGHT = 14.1       # カナ/漢字/年
+
+# カラーパレット（依頼ファイル準拠）
+COLOR_TITLE_BG = "0078D4"      # 明るい青（タイトル）
+COLOR_TOP_HEADER_BG = "1F4E79" # 濃紺（支店長 など最上位ラベル）
+COLOR_SUBHEADER_BG = "5B9BD5"  # 中青（支店付 / 課長 / SA など）
+COLOR_SECTION_BG = "DDEBF7"    # 淡い青（営 業 課 / 課サブセクション）
+COLOR_TEXT_WHITE = "FFFFFF"
 COLOR_TEXT_KANA = "555555"
 COLOR_TEXT_YEAR = "555555"
 COLOR_TEXT_KANJI = "111111"
-COLOR_TEXT_UNREG = "CC0000"
+COLOR_TEXT_DARK = "1F4E79"     # 淡い背景上のラベルテキスト
 COLOR_TEXT_LEAVE = "888888"
+COLOR_BORDER_THIN = "6E8FB7"   # 人物ブロック細枠
+COLOR_BORDER_THICK = "1F4E79"  # ラベル左罫など
 
-THICK_BORDER = Side(style="thick", color=COLOR_OUTER_BORDER)
-THIN_BORDER = Side(style="thin", color=COLOR_CELL_BORDER)
-LABEL_BORDER = Side(style="medium", color=COLOR_LABEL_BORDER)
+THIN_BORDER = Side(style="thin", color=COLOR_BORDER_THIN)
+THICK_BORDER_DARK = Side(style="thick", color=COLOR_BORDER_THICK)
 
 
 def _norm(s: str) -> str:
@@ -296,7 +312,9 @@ def _to_year4(raw) -> str | None:
 
 
 def _setup_sheet(ws) -> None:
-    for c in range(1, DATA_COL_END + 4):
+    """列幅: col A は左マージン (2.625)、col B 以降は等幅 (13.0)。"""
+    ws.column_dimensions["A"].width = MARGIN_COL_WIDTH
+    for c in range(2, DATA_COL_END + 1):
         ws.column_dimensions[get_column_letter(c)].width = UNIFORM_COL_WIDTH
 
 
@@ -321,41 +339,39 @@ def _setup_page(ws) -> None:
 
 
 def _set_block_row_heights(ws, row_start: int) -> None:
-    """1人ブロック分の行高を設定（写真領域＋ラベル2行）。"""
+    """1人ブロック分の行高を設定（写真8行 + カナ/漢字/年の3行）。"""
     for r in range(row_start, row_start + PHOTO_ROWS):
         ws.row_dimensions[r].height = PHOTO_ROW_HEIGHT
-    ws.row_dimensions[row_start + PHOTO_ROWS].height = LABEL_ROW_HEIGHT
-    ws.row_dimensions[row_start + PHOTO_ROWS + 1].height = LABEL_ROW_HEIGHT
+    for k in range(LABEL_ROWS):
+        ws.row_dimensions[row_start + PHOTO_ROWS + k].height = LABEL_ROW_HEIGHT
 
 
 def _label_box(ws, row: int, col_start: int, col_end: int, text: str,
-               *, size: int = 11, height: float | None = 18):
-    """役職ラベル/セクションヘッダ用のテーマ統一されたボックス。"""
+               *, size: int = 11, bold: bool = True,
+               fill_color: str = COLOR_SECTION_BG,
+               text_color: str = COLOR_TEXT_DARK,
+               height: float | None = None,
+               left_thick: bool = False):
+    """ラベルボックス（背景色付きセル）を描画。"""
     cell = ws.cell(row=row, column=col_start, value=text)
-    cell.font = Font(size=size, bold=True, color="FFFFFF")
-    cell.fill = PatternFill("solid", fgColor=COLOR_LABEL_BG)
+    cell.font = Font(name=FONT_NAME, size=size, bold=bold, color=text_color)
+    cell.fill = PatternFill("solid", fgColor=fill_color)
     cell.alignment = Alignment(horizontal="center", vertical="center")
-    cell.border = Border(left=LABEL_BORDER, right=LABEL_BORDER,
-                         top=LABEL_BORDER, bottom=LABEL_BORDER)
+    if left_thick:
+        cell.border = Border(left=THICK_BORDER_DARK)
     if col_end > col_start:
         ws.merge_cells(start_row=row, start_column=col_start,
                        end_row=row, end_column=col_end)
-        # 結合先セルにも罫線が必要
-        for c in range(col_start + 1, col_end + 1):
-            ws.cell(row=row, column=c).border = Border(
-                left=LABEL_BORDER, right=LABEL_BORDER,
-                top=LABEL_BORDER, bottom=LABEL_BORDER,
-            )
     if height:
         ws.row_dimensions[row].height = height
 
 
 def _label_text(ws, row: int, col_start: int, col_end: int, text: str,
-                *, size: int = 9, bold: bool = False,
+                *, size: int = 10, bold: bool = False,
                 color: str = "111111", align: str = "center"):
-    """写真下のラベル行に統一書式でテキストを書く（複数セルをマージ）。"""
+    """3行ラベル（カナ/漢字/年）テキスト書き込み。"""
     cell = ws.cell(row=row, column=col_start, value=text)
-    cell.font = Font(size=size, bold=bold, color=color)
+    cell.font = Font(name=FONT_NAME, size=size, bold=bold, color=color)
     cell.alignment = Alignment(horizontal=align, vertical="center")
     if col_end > col_start:
         ws.merge_cells(start_row=row, start_column=col_start,
@@ -365,41 +381,6 @@ def _label_text(ws, row: int, col_start: int, col_end: int, text: str,
 def _keep_side(side):
     """既存の Side が定義済みなら返す。なければ None。"""
     return side if (side is not None and side.style) else None
-
-
-def _apply_outer_border(ws, row_end: int) -> None:
-    """シート全体を太い濃紺枠で囲む（既存のセル罫線は保持）。"""
-    col_start, col_end = 1, DATA_COL_END
-    for c in range(col_start, col_end + 1):
-        top_cell = ws.cell(row=1, column=c)
-        top_cell.border = Border(
-            top=THICK_BORDER,
-            left=_keep_side(top_cell.border.left),
-            right=_keep_side(top_cell.border.right),
-            bottom=_keep_side(top_cell.border.bottom),
-        )
-        bot_cell = ws.cell(row=row_end, column=c)
-        bot_cell.border = Border(
-            bottom=THICK_BORDER,
-            top=_keep_side(bot_cell.border.top),
-            left=_keep_side(bot_cell.border.left),
-            right=_keep_side(bot_cell.border.right),
-        )
-    for r in range(1, row_end + 1):
-        l_cell = ws.cell(row=r, column=col_start)
-        l_cell.border = Border(
-            left=THICK_BORDER,
-            top=_keep_side(l_cell.border.top),
-            right=_keep_side(l_cell.border.right),
-            bottom=_keep_side(l_cell.border.bottom),
-        )
-        r_cell = ws.cell(row=r, column=col_end)
-        r_cell.border = Border(
-            right=THICK_BORDER,
-            top=_keep_side(r_cell.border.top),
-            left=_keep_side(r_cell.border.left),
-            bottom=_keep_side(r_cell.border.bottom),
-        )
 
 
 def _insert_photo(ws, col0_1: int, row0_1: int, w_cols: int, h_rows: int, path: Path) -> None:
@@ -415,6 +396,14 @@ def _insert_photo(ws, col0_1: int, row0_1: int, w_cols: int, h_rows: int, path: 
     ws.add_image(img)
 
 
+def _person_display_name(person: PersonEntry, emp) -> str:
+    """漢字氏名の表示。役職記号は基本除去するが「兼）」だけは復元する。"""
+    name = emp.name if emp else person.name
+    if "兼" in (person.marks or ""):
+        return f"兼）{name}"
+    return name
+
+
 def _draw_person_block(
     ws,
     col_start_1: int,
@@ -424,55 +413,45 @@ def _draw_person_block(
     photo_path: Path | None,
     is_on_leave: bool,
 ) -> None:
-    """1人分（写真＋kana＋年＋kanji）を描画。
+    """1人分（写真8行 + カナ・漢字・年 の3行ラベル）を描画。
 
-    レイアウト:
-      [写真領域 (PHOTO_ROWS 行 × PERSON_COL_W-1 列)]
-      [カナ氏名 (左寄せ) | 入社年 (右寄せ)]
-      [漢字氏名 (中央)]
+    人物スロット: col_start_1 から 5 列 (col_start_1+0 〜 col_start_1+4)、
+    最右端 (+5) は次スロットとの間のギャップ。
     """
     _set_block_row_heights(ws, row_start_1)
 
-    col_end = col_start_1 + PERSON_COL_W - 1  # ブロック右端列（区切り余白含まず）
-    photo_col_end = col_end - 1  # 区切り1列を残す
+    photo_col_end = col_start_1 + (PERSON_COL_W - 2)  # = +4 (5列の最右)
 
-    # 写真領域＋ラベル領域を囲む枠（ブロック外枠）
-    block_border = Side(style="thin", color="6E8FB7")
+    # 写真+ラベルを細枠で囲む
     for r in range(row_start_1, row_start_1 + PHOTO_ROWS + LABEL_ROWS):
         for c in range(col_start_1, photo_col_end + 1):
-            existing = ws.cell(row=r, column=c).border
             is_top = (r == row_start_1)
             is_bottom = (r == row_start_1 + PHOTO_ROWS + LABEL_ROWS - 1)
             is_left = (c == col_start_1)
             is_right = (c == photo_col_end)
             ws.cell(row=r, column=c).border = Border(
-                left=block_border if is_left else None,
-                right=block_border if is_right else None,
-                top=block_border if is_top else None,
-                bottom=block_border if is_bottom else None,
+                left=THIN_BORDER if is_left else None,
+                right=THIN_BORDER if is_right else None,
+                top=THIN_BORDER if is_top else None,
+                bottom=THIN_BORDER if is_bottom else None,
             )
 
-    # 写真領域: 本物の写真 → なければプレースホルダー画像を貼る
     img_to_use = photo_path if (photo_path and not is_on_leave) else PLACEHOLDER_PHOTO_PATH
     if img_to_use and img_to_use.is_file():
-        # 写真はブロック領域いっぱいに広げる（左上に寄らないように）
         _insert_photo(ws, col_start_1, row_start_1,
                       PERSON_COL_W - 1, PHOTO_ROWS, img_to_use)
     if is_on_leave:
-        # 休職中: プレースホルダー上に「休職中」ラベルをかぶせる
         cell = ws.cell(row=row_start_1 + PHOTO_ROWS - 1, column=col_start_1,
                        value="休職中")
-        cell.font = Font(size=9, italic=True, color=COLOR_TEXT_LEAVE)
+        cell.font = Font(name=FONT_NAME, size=9, italic=True, color=COLOR_TEXT_LEAVE)
         cell.alignment = Alignment(horizontal="center", vertical="bottom")
 
-    label_row_1 = row_start_1 + PHOTO_ROWS
-    label_row_2 = label_row_1 + 1
+    label_row_kana = row_start_1 + PHOTO_ROWS
+    label_row_kanji = label_row_kana + 1
+    label_row_year = label_row_kanji + 1
 
-    # カナ氏名 (左半分) + 入社年 (右半分)
-    half = max(1, (photo_col_end - col_start_1 + 1) // 2)
     kana = (emp.name_kana if emp else None) or ""
 
-    # 入社年: DB に元表記 (M2017 等) があればそちらを優先、なければ4桁年
     year_display: str = ""
     if emp and emp.join_year_text:
         year_display = str(emp.join_year_text)
@@ -483,21 +462,20 @@ def _draw_person_block(
         elif emp and emp.join_year:
             year_display = str(emp.join_year)
 
-    _label_text(ws, label_row_1, col_start_1, col_start_1 + half - 1,
-                kana, size=10, color=COLOR_TEXT_KANA, align="left")
-    if year_display:
-        cell = ws.cell(row=label_row_1, column=col_start_1 + half, value=year_display)
-        cell.font = Font(size=10, color=COLOR_TEXT_YEAR)
-        cell.alignment = Alignment(horizontal="right", vertical="center")
-        if photo_col_end > col_start_1 + half:
-            ws.merge_cells(start_row=label_row_1, start_column=col_start_1 + half,
-                           end_row=label_row_1, end_column=photo_col_end)
+    # カナ: 全幅中央寄せ 10pt #555555
+    _label_text(ws, label_row_kana, col_start_1, photo_col_end,
+                kana, size=10, color=COLOR_TEXT_KANA, align="center")
 
-    # 漢字氏名（役職記号付き、中央寄せ）
-    name = emp.name if emp else person.name
-    display = (person.marks or "") + name
-    _label_text(ws, label_row_2, col_start_1, photo_col_end,
-                display, size=11, bold=True, color=COLOR_TEXT_KANJI, align="center")
+    # 漢字: 全幅中央寄せ 11pt **非ボールド** #111111。
+    # 役職記号は基本除去するが「兼）」だけは残す。
+    _label_text(ws, label_row_kanji, col_start_1, photo_col_end,
+                _person_display_name(person, emp),
+                size=11, bold=False, color=COLOR_TEXT_KANJI, align="center")
+
+    # 年: 全幅中央寄せ 10pt #555555（値がある時のみ書き込み）
+    if year_display:
+        _label_text(ws, label_row_year, col_start_1, photo_col_end,
+                    year_display, size=10, color=COLOR_TEXT_YEAR, align="center")
 
 
 def _determine_leader_label(section_name: str, leader: PersonEntry) -> str:
@@ -513,6 +491,23 @@ def _determine_leader_label(section_name: str, leader: PersonEntry) -> str:
     return base
 
 
+def _section_title_format(section_name: str) -> str:
+    """セクション名の表示形式。2〜3文字は文字間を空ける（例: '営業課' → '営 業 課'）。"""
+    name = section_name.strip()
+    if 2 <= len(name) <= 4:
+        return " ".join(name)
+    return name
+
+
+def _slot_col(slot_index: int) -> int:
+    """0始まりのスロット番号 → 開始列 (col_start_1)。"""
+    return SHEET_START_COL + slot_index * PERSON_COL_W
+
+
+def _slot_content_end(slot_col_start: int) -> int:
+    return slot_col_start + (PERSON_COL_W - 2)  # 5列の右端
+
+
 def _build_section(
     ws,
     row_start: int,
@@ -520,43 +515,69 @@ def _build_section(
     course_rows: list[CourseRow],
     lookup_fn,
 ) -> tuple[int, list[int]]:
-    """1セクション（●営業課 or ●設計課）を描画する。
+    """1セクション（営業課 / 設計課 など）を描画。
 
-    Returns:
-        (次の開始行, 各課行の写真開始行のリスト)
+    レイアウト:
+      [セクションヘッダ行（例: 「営 業 課」）]
+      [スペーサー]
+      for each course_row:
+        [サブセクション行（例: 「営業1課」）]  ※ course_name があれば
+        [スペーサー]
+        [役職ラベル行（例: 「課長」「課長代務」）]  ※ persons があれば
+        [スペーサー]
+        [写真 8行]
+        [カナ / 漢字 / 年 の 3行]
+        [間ギャップ 1行]
     """
-    title = f"● {' '.join(section_name)}" if len(section_name) <= 4 else f"● {section_name}"
-    _label_box(ws, row_start, 1, LEFT_LABEL_COLS, title, size=12, height=22)
-    row = row_start + 1
     photo_row_starts: list[int] = []
+    label_col_end = _slot_content_end(SHEET_START_COL)
 
-    for idx, cr in enumerate(course_rows):
-        # === リーダー役職ラベル行（写真の上）===
-        if cr.persons and (cr.course_name or idx == 0):
-            lbl = _determine_leader_label(section_name, cr.persons[0])
-            if lbl:
-                col_start = SHEET_START_COL + LEFT_LABEL_COLS
-                col_end = col_start + PERSON_COL_W - 2
-                _label_box(ws, row, col_start, col_end, lbl, size=10, height=16)
-        row += LEADER_LABEL_ROWS
+    # セクションヘッダ（淡い青、12pt bold）。スロット1に配置。
+    _label_box(ws, row_start, SHEET_START_COL, label_col_end,
+               _section_title_format(section_name),
+               size=12, bold=True,
+               fill_color=COLOR_SECTION_BG, text_color=COLOR_TEXT_DARK,
+               height=SECTION_HEADER_HEIGHT, left_thick=True)
+    row = row_start + 1
+    ws.row_dimensions[row].height = SPACER_HEIGHT
+    row += 1
 
-        # 写真の開始位置をここで記録
+    for cr in course_rows:
+        # サブセクション
+        if cr.course_name:
+            _label_box(ws, row, SHEET_START_COL, label_col_end,
+                       cr.course_name,
+                       size=10, bold=True,
+                       fill_color=COLOR_SECTION_BG, text_color=COLOR_TEXT_DARK,
+                       height=SUBSECTION_HEIGHT, left_thick=True)
+            row += 1
+            ws.row_dimensions[row].height = SPACER_HEIGHT
+            row += 1
+
+        # 役職ラベル（課長 / 課長代務 / 室長 等）
+        if cr.persons:
+            role_lbl = _determine_leader_label(section_name, cr.persons[0])
+            if role_lbl:
+                _label_box(ws, row, SHEET_START_COL, label_col_end,
+                           role_lbl,
+                           size=10, bold=True,
+                           fill_color=COLOR_SUBHEADER_BG, text_color=COLOR_TEXT_WHITE,
+                           height=ROLE_LABEL_HEIGHT, left_thick=True)
+                row += 1
+                ws.row_dimensions[row].height = SPACER_HEIGHT
+                row += 1
+
+        # 写真開始行を記録
         photo_row_starts.append(row)
 
-        # === 左に課ラベル（写真行の中段）===
-        if cr.course_name:
-            mid_row = row + (PHOTO_ROWS // 2)
-            _label_box(ws, mid_row, 1, LEFT_LABEL_COLS - 1,
-                       cr.course_name, size=10, height=16)
-
-        # === 各人ブロック ===
+        # 各人ブロック
         for i, person in enumerate(cr.persons):
-            col_start = SHEET_START_COL + LEFT_LABEL_COLS + i * PERSON_COL_W
+            col_start = _slot_col(i)
             emp, photo_path, is_on_leave = lookup_fn(person.name)
             _draw_person_block(ws, col_start, row, person, emp, photo_path, is_on_leave)
-        row += PHOTO_ROWS + LABEL_ROWS + 1
+        row += PHOTO_ROWS + LABEL_ROWS + 1   # 写真+3行ラベル+間ギャップ
 
-    return row + 1, photo_row_starts
+    return row, photo_row_starts
 
 
 def _build_extra_persons(
@@ -566,16 +587,28 @@ def _build_extra_persons(
     persons: list[PersonEntry],
     lookup_fn,
 ) -> int:
-    """実務職/契約/派遣のサイドリスト的ブロック。"""
+    """SA（実務職）など、ラベル付きサイドブロックを描画。"""
     if not persons:
         return row_start
-    _label_box(ws, row_start, 1, LEFT_LABEL_COLS, f"《{title}》", size=11, height=20)
+    # SA ラベルは依頼ファイルでは I列(スロット2) に置かれているのでそれに合わせる
+    label_col_start = _slot_col(1)
+    label_col_end = _slot_content_end(label_col_start)
+    _label_box(ws, row_start, label_col_start, label_col_end,
+               title,
+               size=12, bold=True,
+               fill_color=COLOR_SUBHEADER_BG, text_color=COLOR_TEXT_WHITE,
+               height=SECTION_HEADER_HEIGHT, left_thick=True)
     row = row_start + 1
-    per_row = 8
+    ws.row_dimensions[row].height = SPACER_HEIGHT
+    row += 1
+
+    per_row = 7
+    base_slot = 1   # SA はスロット 2 (col I) から開始
     for i, person in enumerate(persons):
         if i > 0 and i % per_row == 0:
             row += PERSON_TOTAL_H
-        col_start = SHEET_START_COL + LEFT_LABEL_COLS + (i % per_row) * PERSON_COL_W
+        slot = base_slot + (i % per_row)
+        col_start = _slot_col(slot) if slot < (1 + per_row) else _slot_col((i % per_row))
         emp, photo_path, is_on_leave = lookup_fn(person.name)
         _draw_person_block(ws, col_start, row, person, emp, photo_path, is_on_leave)
     return row + PERSON_TOTAL_H + 1
@@ -636,33 +669,61 @@ def build_workbook(
         if sheet_name in wb.sheetnames:
             sheet_name = sheet_name + "_2"
         ws = wb.create_sheet(sheet_name)
-        ws.sheet_view.showGridLines = False  # グリッド線を非表示
+        ws.sheet_view.showGridLines = False
         _setup_sheet(ws)
         _setup_page(ws)
 
-        # タイトル（濃紺で支店名を表示）
+        # タイトル: 明るい青 #0078D4, 28pt Meiryo UI bold WHITE, 左寄せ indent=1, 高さ 50.25
         tcell = ws.cell(row=1, column=1, value=branch.branch_name)
-        tcell.font = Font(bold=True, size=14, color="FFFFFF")
+        tcell.font = Font(name=FONT_NAME, bold=True, size=28, color=COLOR_TEXT_WHITE)
         tcell.fill = PatternFill("solid", fgColor=COLOR_TITLE_BG)
         tcell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
         ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=DATA_COL_END)
-        ws.row_dimensions[1].height = HEADER_ROW_HEIGHT
+        ws.row_dimensions[1].height = TITLE_ROW_HEIGHT
         row = 3
 
-        # 上位役職（支店長/支店付/兼務）
+        # 上位役職（支店長 = 濃紺、支店付/兼務 等 = 中青）
+        # 兼務 はラベルを「支店付」にリネーム、人物 display に「兼）」を付与、
+        # さらに視覚的に分離するため 1 スロット飛ばして配置する。
         if branch.top_positions:
-            persons_raw = [_parse_person(name, None) for _, name in branch.top_positions]
-            pairs = [(lbl, p) for (lbl, _), p in zip(branch.top_positions, persons_raw) if p]
-            for i, (lbl, p) in enumerate(pairs):
-                col_start = SHEET_START_COL + LEFT_LABEL_COLS + i * PERSON_COL_W
-                col_end = col_start + PERSON_COL_W - 2  # 区切り1列を残す
-                _label_box(ws, row, col_start, col_end, lbl, size=10, height=18)
+            slotted_pairs: list[tuple[str, PersonEntry, int]] = []
+            next_slot = 0
+            for orig_label, raw_name in branch.top_positions:
+                p = _parse_person(raw_name, None)
+                if p is None:
+                    continue
+                if orig_label.strip() == "兼務":
+                    display_label = "支店付"
+                    if "兼" not in (p.marks or ""):
+                        p.marks = "兼" + (p.marks or "")
+                    # 兼務エントリは 1 スロット飛ばし
+                    next_slot = max(next_slot + 1, 2)
+                else:
+                    display_label = orig_label
+                slotted_pairs.append((display_label, p, next_slot))
+                next_slot += 1
+
+            for i, (lbl, _, slot) in enumerate(slotted_pairs):
+                col_start = _slot_col(slot)
+                col_end = _slot_content_end(col_start)
+                if i == 0:
+                    _label_box(ws, row, col_start, col_end, lbl,
+                               size=12, bold=True,
+                               fill_color=COLOR_TOP_HEADER_BG, text_color=COLOR_TEXT_WHITE,
+                               height=TOP_HEADER_HEIGHT)
+                else:
+                    _label_box(ws, row, col_start, col_end, lbl,
+                               size=10, bold=True,
+                               fill_color=COLOR_SUBHEADER_BG, text_color=COLOR_TEXT_WHITE,
+                               height=TOP_HEADER_HEIGHT)
             row += 1
-            for i, (_, p) in enumerate(pairs):
-                col_start = SHEET_START_COL + LEFT_LABEL_COLS + i * PERSON_COL_W
+            ws.row_dimensions[row].height = SPACER_HEIGHT
+            row += 1
+            for (_, p, slot) in slotted_pairs:
+                col_start = _slot_col(slot)
                 emp, photo_path, is_on_leave = lookup(p.name)
                 _draw_person_block(ws, col_start, row, p, emp, photo_path, is_on_leave)
-            row += PERSON_TOTAL_H + 1
+            row += PHOTO_ROWS + LABEL_ROWS + 1
 
         # 各セクション（●営業課/●設計課）
         section_photo_rows: dict[str, list[int]] = {}
@@ -670,54 +731,44 @@ def build_workbook(
             row, photo_starts = _build_section(ws, row, section_name, course_rows, lookup)
             section_photo_rows[section_name] = photo_starts
 
-        # 派遣社員＋契約社員 → 設計課の2段目 (なければ最終課行) の右側にラベルなし配置
-        # ただしメイン人物と重ならないよう右側に追いやる。あふれる場合は次の行に。
+        # 派遣社員＋契約社員 → 設計課の最終課行に続けて、空きスロットに配置
         extras = list(branch.haken) + list(branch.keiyaku)
         if extras:
             design_section_name = next(
                 (sn for sn in section_photo_rows if "設計" in sn), None
             )
             target_row: int | None = None
-            persons_on_target_row = 0
+            occupied_slots = 0
             if design_section_name:
                 starts = section_photo_rows[design_section_name]
                 design_courses = branch.sections.get(design_section_name, [])
                 if len(starts) >= 2:
                     target_row = starts[1]
-                    persons_on_target_row = (len(design_courses[1].persons)
-                                             if len(design_courses) >= 2 else 0)
+                    occupied_slots = (len(design_courses[1].persons)
+                                       if len(design_courses) >= 2 else 0)
                 elif starts:
                     target_row = starts[0]
-                    persons_on_target_row = (len(design_courses[0].persons)
-                                             if design_courses else 0)
-            if target_row is None:
-                all_starts = [(r, 0) for starts in section_photo_rows.values() for r in starts]
-                if all_starts:
-                    target_row = all_starts[-1][0]
+                    occupied_slots = (len(design_courses[0].persons)
+                                       if design_courses else 0)
 
             if target_row is not None:
-                count = len(extras)
-                # メイン人物が占めている右端の次の列
-                main_right_edge = SHEET_START_COL + LEFT_LABEL_COLS + persons_on_target_row * PERSON_COL_W
-                # 右寄せで配置したい開始列
-                desired_start = DATA_COL_END - count * PERSON_COL_W + 1
-                start_col = max(desired_start, main_right_edge + 1)
-                # それでも右端を超える場合は、SA の直上に新しい行を立てて配置
-                if start_col + count * PERSON_COL_W > DATA_COL_END + 1:
-                    target_row = row
-                    start_col = max(SHEET_START_COL + LEFT_LABEL_COLS,
-                                    DATA_COL_END - count * PERSON_COL_W + 1)
-                    row += PHOTO_ROWS + LABEL_ROWS + 1
                 for i, person in enumerate(extras):
-                    col_start = start_col + i * PERSON_COL_W
+                    slot = occupied_slots + i
+                    col_start = _slot_col(slot)
                     emp, photo_path, is_on_leave = lookup(person.name)
                     _draw_person_block(ws, col_start, target_row, person,
                                        emp, photo_path, is_on_leave)
+            else:
+                # 設計課が無い場合は SA の上に独立行で配置
+                for i, person in enumerate(extras):
+                    col_start = _slot_col(i)
+                    emp, photo_path, is_on_leave = lookup(person.name)
+                    _draw_person_block(ws, col_start, row, person,
+                                       emp, photo_path, is_on_leave)
+                row += PHOTO_ROWS + LABEL_ROWS + 1
 
-        # SA（実務職）はラベル付きでメイン領域の下に配置
+        # SA（実務職）はメイン領域の下、I列(スロット2)から
         row = _build_extra_persons(ws, row, "SA", branch.jimu, lookup)
-
-        _apply_outer_border(ws, max(row, 5))
 
     return wb, stats
 

@@ -15,7 +15,7 @@ _CONCURRENT_PREFIX_RE = re.compile(r"^[\s　]*兼\s*[)）)）]\s*")
 # 役職/区分マークとして氏名先頭に付くことがある記号類。
 # テンプレに `＊田中 秀明` のように書かれていても、本人として照合できるように
 # マッチ時の正規化と出力時のセル整形で剥がす。
-NAME_PREFIX_MARK_CHARS = "＊*☆★○●◎◯◇◆△▲▽▼ＣCＭM"
+NAME_PREFIX_MARK_CHARS = "＊*☆★○●◎◯〇◇◆△▲▽▼■□ＣCＭM"
 _NAME_PREFIX_MARK_RE = re.compile(
     rf"^[\s　]*[{re.escape(NAME_PREFIX_MARK_CHARS)}]+[\s　]*"
 )
