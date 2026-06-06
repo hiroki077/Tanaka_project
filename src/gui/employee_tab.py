@@ -39,6 +39,7 @@ class EmployeeTab(QWidget):
         ("役職", 100),
         ("雇用", 80),
         ("状態", 80),
+        ("非表示", 60),
     ]
 
     def __init__(self, employee_service: EmployeeService, photo_service: PhotoService):
@@ -176,6 +177,7 @@ class EmployeeTab(QWidget):
         self.table.setItem(r, 0, item_photo)
 
         year_display = emp.join_year_text or (str(emp.join_year) if emp.join_year else "")
+        hidden_display = "✓" if getattr(emp, "hidden", False) else ""
         values = [
             emp.name or "",
             emp.name_kana or "",
@@ -184,10 +186,13 @@ class EmployeeTab(QWidget):
             emp.role or "",
             emp.employment_type or "",
             emp.status or "",
+            hidden_display,
         ]
         for c, v in enumerate(values, start=1):
             it = QTableWidgetItem(v)
             it.setData(Qt.UserRole, emp.id)
+            if c == len(values) and v == "✓":
+                it.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(r, c, it)
 
     def _selected_employee_id(self) -> int | None:

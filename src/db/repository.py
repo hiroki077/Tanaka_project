@@ -83,6 +83,8 @@ class Database:
             new_cols = [
                 ("reference_name", "VARCHAR(128)"),
                 ("join_year_text", "VARCHAR(16)"),
+                ("hidden", "BOOLEAN NOT NULL DEFAULT 0"),
+                ("is_ia", "BOOLEAN NOT NULL DEFAULT 0"),
             ]
             for col_name, col_type in new_cols:
                 if col_name not in existing_cols:

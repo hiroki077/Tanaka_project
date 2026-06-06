@@ -11,7 +11,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QDialog, QFormLayout, QVBoxLayout, QHBoxLayout, QLineEdit,
     QComboBox, QPushButton, QLabel, QDialogButtonBox, QFileDialog,
-    QMessageBox,
+    QMessageBox, QCheckBox,
 )
 
 from ...db import EmploymentStatus
@@ -47,6 +47,8 @@ class EmployeeEditDialog(QDialog):
         self.status = QComboBox()
         for s in EmploymentStatus:
             self.status.addItem(s.value, s.value)
+        self.hidden_check = QCheckBox("出力時に非表示（本社兼務など）")
+        self.is_ia_check = QCheckBox("IA 区分（出力時に「IA」セクションに分離）")
         self.note = QLineEdit()
 
         self.preview = QLabel()
@@ -75,6 +77,8 @@ class EmployeeEditDialog(QDialog):
         form.addRow("役職記号", self.role_marks)
         form.addRow("雇用区分", self.employment_type)
         form.addRow("ステータス", self.status)
+        form.addRow("", self.hidden_check)
+        form.addRow("", self.is_ia_check)
         form.addRow("備考", self.note)
         # 所属（本部・支店・課）はテンプレートExcel側で管理するためフォームから除外
 
@@ -119,6 +123,8 @@ class EmployeeEditDialog(QDialog):
         idx = self.status.findData(emp.status)
         if idx >= 0:
             self.status.setCurrentIndex(idx)
+        self.hidden_check.setChecked(bool(getattr(emp, "hidden", False)))
+        self.is_ia_check.setChecked(bool(getattr(emp, "is_ia", False)))
         self.note.setText(emp.note or "")
         p = self.photo_service.resolve(emp.photo_path)
         if p:
@@ -256,6 +262,8 @@ class EmployeeEditDialog(QDialog):
             "role_marks": self.role_marks.text().strip() or None,
             "employment_type": self.employment_type.currentText() or None,
             "status": self.status.currentData(),
+            "hidden": self.hidden_check.isChecked(),
+            "is_ia": self.is_ia_check.isChecked(),
             "note": self.note.text().strip() or None,
             "_photo_src": self._new_photo_src,
         }

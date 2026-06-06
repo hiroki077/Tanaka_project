@@ -70,6 +70,10 @@ class PersonEntry:
 class CourseRow:
     course_name: str   # "営業1課" / "" / "設計課"
     persons: list[PersonEntry]
+    # 同 master 行で同時に取り込まれる事務職/契約/派遣（per-課 表示用）
+    jimu: list[PersonEntry] = field(default_factory=list)
+    keiyaku: list[PersonEntry] = field(default_factory=list)
+    haken: list[PersonEntry] = field(default_factory=list)
 
 
 @dataclass
@@ -133,18 +137,19 @@ def parse_master(path: Path) -> list[BranchData]:
             branches.append(current)
         current = None
 
+    last_course_row: CourseRow | None = None
+    section_closed = False   # AD列 '兼務除く' 検出後 True、新しい ● セクションでリセット
+
     for row in range(1, ws.max_row + 1):
         f = ws.cell(row=row, column=COL_F).value
         g = ws.cell(row=row, column=COL_G).value
         i = ws.cell(row=row, column=COL_I).value
         j = ws.cell(row=row, column=COL_J).value
 
-        # ブロックヘッダ判定（branch切替）。同じ行のセクション/人物データは
-        # この後続けて処理するため continue しない。
         if f and isinstance(f, str):
             text = f.strip()
             if EXCLUDE_BRANCH_RE.match(text):
-                continue   # 集計行は完全スキップ
+                continue
             if BRANCH_RE.match(text):
                 flush()
                 current = BranchData(
@@ -153,25 +158,28 @@ def parse_master(path: Path) -> list[BranchData]:
                     jimu=[], keiyaku=[], haken=[],
                 )
                 current_section = None
+                last_course_row = None
+                section_closed = False
 
         if not current:
             continue
 
-        # 役職 + 氏名（F+G）。ただし branch ヘッダ自身は除く。
         if f and isinstance(f, str) and g:
             text = f.strip()
             if not BRANCH_RE.match(text):
                 current.top_positions.append((text, str(g).strip()))
 
-        # セクションヘッダ
         if i and isinstance(i, str):
             m = SECTION_RE.match(i.strip())
             if m:
                 current_section = m.group(1).strip()
                 current.sections.setdefault(current_section, [])
+                section_closed = False   # 新しいセクション開始
+                last_course_row = None
 
         # 課行（総合職）
-        if current_section is not None:
+        new_course_row: CourseRow | None = None
+        if current_section is not None and not section_closed:
             course_name = ""
             if j and isinstance(j, str):
                 course_name = j.strip()
@@ -184,21 +192,31 @@ def parse_master(path: Path) -> list[BranchData]:
                     if p:
                         persons.append(p)
             if persons:
-                current.sections[current_section].append(
-                    CourseRow(course_name=course_name, persons=persons)
-                )
+                new_course_row = CourseRow(course_name=course_name, persons=persons)
+                current.sections[current_section].append(new_course_row)
+                last_course_row = new_course_row
 
-        # 実務職・契約・派遣
-        for col, bucket, cat in [
-            *[(c, current.jimu, "実務職") for c in JIMU_COLS],
-            *[(c, current.keiyaku, "契約") for c in KEIYAKU_COLS],
-            *[(c, current.haken, "派遣") for c in HAKEN_COLS],
-        ]:
-            v = ws.cell(row=row, column=col).value
-            if v and isinstance(v, str) and v.strip():
-                p = _parse_person(v, None, cat)
-                if p:
-                    bucket.append(p)
+        # 実務職・契約・派遣 → branch 単位 + 同 master 行は直近 CourseRow にも紐付け
+        # section_closed の場合は branch にも紐付けない（GM 候補等の混入を防ぐ）
+        if not section_closed:
+            cr_attach = new_course_row or last_course_row
+            for col, branch_bucket, cr_attr, cat in [
+                *[(c, current.jimu, "jimu", "実務職") for c in JIMU_COLS],
+                *[(c, current.keiyaku, "keiyaku", "契約") for c in KEIYAKU_COLS],
+                *[(c, current.haken, "haken", "派遣") for c in HAKEN_COLS],
+            ]:
+                v = ws.cell(row=row, column=col).value
+                if v and isinstance(v, str) and v.strip():
+                    p = _parse_person(v, None, cat)
+                    if p:
+                        branch_bucket.append(p)
+                        if cr_attach is not None:
+                            getattr(cr_attach, cr_attr).append(p)
+
+        # AD列(col 30) の '兼務除く' でセクション終了を検出
+        ad_val = ws.cell(row=row, column=30).value
+        if isinstance(ad_val, str) and "兼務除く" in ad_val:
+            section_closed = True
 
     flush()
     return branches
@@ -207,7 +225,7 @@ def parse_master(path: Path) -> list[BranchData]:
 # ============================================================
 # 出力レイアウト （202605_顔写真版_修正依頼0605.xlsx 仕様 準拠）
 # ============================================================
-FONT_NAME = "Meiryo UI"
+FONT_NAME = "Meiryo"  # 役職12/氏名11/フリガナ年次10/タイトル28、太字使い分け
 
 PERSON_COL_W = 6      # 1人スロット = 5列(content) + 1列(gap)
 PHOTO_ROWS = 8        # 写真の高さ（行数）
@@ -236,7 +254,8 @@ SECTION_HEADER_HEIGHT = 19.5  # 「営 業 課」「設 計 課」
 SUBSECTION_HEIGHT = 19.5      # 「営業1課」「営業2課」
 ROLE_LABEL_HEIGHT = 19.5      # 「課長」「課長代務」
 SPACER_HEIGHT = 6.0           # ラベル間のスペーサー行
-PHOTO_ROW_HEIGHT = 15.0
+# 写真比率 3:4 (col_width 3.0 × 5列 = 105px / row_height 13.13 × 8行 = 140px)
+PHOTO_ROW_HEIGHT = 13.13
 LABEL_ROW_HEIGHT = 14.1       # カナ/漢字/年
 
 # カラーパレット（依頼ファイル準拠）
@@ -404,12 +423,62 @@ def _insert_photo(ws, col0_1: int, row0_1: int, w_cols: int, h_rows: int, path: 
     ws.add_image(img)
 
 
+def _strip_ia_suffix(name: str) -> str:
+    """氏名末尾の '(IA)' / '（IA）' を除去する。"""
+    if not name:
+        return name
+    return name.replace("(IA)", "").replace("（IA）", "").strip()
+
+
+def _is_ia_member(emp) -> bool:
+    """その従業員が IA 区分かどうか。emp.is_ia フラグ または氏名に '(IA)' を含むかで判定。"""
+    if not emp:
+        return False
+    if getattr(emp, "is_ia", False):
+        return True
+    name = emp.name or ""
+    return "(IA)" in name or "（IA）" in name
+
+
 def _person_display_name(person: PersonEntry, emp) -> str:
-    """漢字氏名の表示。役職記号は基本除去するが「兼）」だけは復元する。"""
+    """漢字氏名の表示。役職記号は基本除去するが「兼）」だけは復元する。
+    末尾の (IA) は別セクションラベルに移すので氏名からは除去。
+    """
     name = emp.name if emp else person.name
+    name = _strip_ia_suffix(name)
     if "兼" in (person.marks or ""):
         return f"兼）{name}"
     return name
+
+
+def _split_ia(persons: list[PersonEntry], lookup_fn) -> tuple[list[PersonEntry], list[PersonEntry]]:
+    """jimu リストを IA と非IA に分割。"""
+    ia_list: list[PersonEntry] = []
+    non_ia: list[PersonEntry] = []
+    for p in persons:
+        emp, _, _, hidden = lookup_fn(p.name)
+        if hidden:
+            # 非表示者は両方からスキップ（呼び出し先で再度 lookup されてもhiddenで除外される）
+            continue
+        if _is_ia_member(emp):
+            ia_list.append(p)
+        else:
+            non_ia.append(p)
+    return ia_list, non_ia
+
+
+def _jimu_label(branch_name: str) -> str:
+    """事務女性の役職表示ラベル。支店=SA / 技術部・事業推進部=実務職 / その他=IA。"""
+    if "支店" in branch_name:
+        return "SA"
+    if branch_name in ("技術部", "事業推進部"):
+        return "実務職"
+    return "IA"
+
+
+def _normalize_year_display(s: str) -> str:
+    """年次文字列から「再」を除去。"""
+    return s.replace("再", "").strip()
 
 
 def _draw_person_block(
@@ -420,6 +489,7 @@ def _draw_person_block(
     emp,
     photo_path: Path | None,
     is_on_leave: bool,
+    show_year: bool = True,
 ) -> None:
     """1人分（写真8行 + カナ・漢字・年 の3行ラベル）を描画。
 
@@ -430,11 +500,12 @@ def _draw_person_block(
 
     photo_col_end = col_start_1 + (PERSON_COL_W - 2)  # = +4 (5列の最右)
 
-    # 写真+ラベルを細枠で囲む
-    for r in range(row_start_1, row_start_1 + PHOTO_ROWS + LABEL_ROWS):
+    # 写真+ラベルを細枠で囲む（show_year=False の場合、年行は枠外）
+    border_rows = PHOTO_ROWS + (LABEL_ROWS if show_year else LABEL_ROWS - 1)
+    for r in range(row_start_1, row_start_1 + border_rows):
         for c in range(col_start_1, photo_col_end + 1):
             is_top = (r == row_start_1)
-            is_bottom = (r == row_start_1 + PHOTO_ROWS + LABEL_ROWS - 1)
+            is_bottom = (r == row_start_1 + border_rows - 1)
             is_left = (c == col_start_1)
             is_right = (c == photo_col_end)
             ws.cell(row=r, column=c).border = Border(
@@ -480,10 +551,12 @@ def _draw_person_block(
                 _person_display_name(person, emp),
                 size=11, bold=False, color=COLOR_TEXT_KANJI, align="center")
 
-    # 年: 全幅中央寄せ 10pt #555555（値がある時のみ書き込み）
-    if year_display:
-        _label_text(ws, label_row_year, col_start_1, photo_col_end,
-                    year_display, size=10, color=COLOR_TEXT_YEAR, align="center")
+    # 年: show_year=True かつ値がある時のみ書き込み。「再」は除去
+    if show_year and year_display:
+        cleaned_year = _normalize_year_display(year_display)
+        if cleaned_year:
+            _label_text(ws, label_row_year, col_start_1, photo_col_end,
+                        cleaned_year, size=10, color=COLOR_TEXT_YEAR, align="center")
 
 
 def _determine_leader_label(section_name: str, leader: PersonEntry) -> str:
@@ -522,68 +595,86 @@ def _build_section(
     section_name: str,
     course_rows: list[CourseRow],
     lookup_fn,
+    per_course_jimu_label: str | None = None,
 ) -> tuple[int, list[int]]:
-    """1セクション（営業課 / 設計課 など）を描画。
+    """1セクションを描画。
 
-    レイアウト:
-      [セクションヘッダ行（例: 「営 業 課」）]
-      [スペーサー]
-      for each course_row:
-        [サブセクション行（例: 「営業1課」）]  ※ course_name があれば
-        [スペーサー]
-        [役職ラベル行（例: 「課長」「課長代務」）]  ※ persons があれば
-        [スペーサー]
-        [写真 8行]
-        [カナ / 漢字 / 年 の 3行]
-        [間ギャップ 1行]
+    per_course_jimu_label が指定された場合、各課の写真+ラベル直下に
+    その課に紐付く 実務職 (CourseRow.jimu + .keiyaku) を「実務職」(等)
+    のラベル付きで描画する（技術部・事業推進部用）。
     """
     photo_row_starts: list[int] = []
     label_col_end = _slot_content_end(SHEET_START_COL)
+    row = row_start
 
-    # セクションヘッダ（淡い青、12pt bold）。スロット1に配置。
-    _label_box(ws, row_start, SHEET_START_COL, label_col_end,
-               _section_title_format(section_name),
-               size=12, bold=True,
-               fill_color=COLOR_SECTION_BG, text_color=COLOR_TEXT_DARK,
-               height=SECTION_HEADER_HEIGHT, left_thick=True)
-    row = row_start + 1
-    ws.row_dimensions[row].height = SPACER_HEIGHT
-    row += 1
+    for cr_idx, cr in enumerate(course_rows):
+        is_continuation = (cr_idx > 0) and (not cr.course_name)
 
-    for cr in course_rows:
-        # サブセクション
-        if cr.course_name:
-            _label_box(ws, row, SHEET_START_COL, label_col_end,
-                       cr.course_name,
-                       size=10, bold=True,
-                       fill_color=COLOR_SECTION_BG, text_color=COLOR_TEXT_DARK,
-                       height=SUBSECTION_HEIGHT, left_thick=True)
-            row += 1
-            ws.row_dimensions[row].height = SPACER_HEIGHT
-            row += 1
-
-        # 役職ラベル（課長 / 課長代務 / 室長 等）
-        if cr.persons:
-            role_lbl = _determine_leader_label(section_name, cr.persons[0])
-            if role_lbl:
+        if not is_continuation:
+            # セクションヘッダ（営業課/設計課）は最初の課にだけ表示
+            if cr_idx == 0:
                 _label_box(ws, row, SHEET_START_COL, label_col_end,
-                           role_lbl,
-                           size=10, bold=True,
-                           fill_color=COLOR_SUBHEADER_BG, text_color=COLOR_TEXT_WHITE,
-                           height=ROLE_LABEL_HEIGHT, left_thick=True)
+                           _section_title_format(section_name),
+                           size=12, bold=True,
+                           fill_color=COLOR_SECTION_BG, text_color=COLOR_TEXT_DARK,
+                           height=SECTION_HEADER_HEIGHT, left_thick=True)
                 row += 1
                 ws.row_dimensions[row].height = SPACER_HEIGHT
                 row += 1
 
-        # 写真開始行を記録
+            if cr.course_name:
+                _label_box(ws, row, SHEET_START_COL, label_col_end,
+                           cr.course_name,
+                           size=12, bold=True,
+                           fill_color=COLOR_SECTION_BG, text_color=COLOR_TEXT_DARK,
+                           height=SUBSECTION_HEIGHT, left_thick=True)
+                row += 1
+                ws.row_dimensions[row].height = SPACER_HEIGHT
+                row += 1
+
+            if cr.persons:
+                role_lbl = _determine_leader_label(section_name, cr.persons[0])
+                if role_lbl:
+                    _label_box(ws, row, SHEET_START_COL, label_col_end,
+                               role_lbl,
+                               size=12, bold=True,
+                               fill_color=COLOR_SUBHEADER_BG, text_color=COLOR_TEXT_WHITE,
+                               height=ROLE_LABEL_HEIGHT, left_thick=True)
+                    row += 1
+                    ws.row_dimensions[row].height = SPACER_HEIGHT
+                    row += 1
+
+            base_slot = 0
+        else:
+            base_slot = 1
+
         photo_row_starts.append(row)
 
-        # 各人ブロック
-        for i, person in enumerate(cr.persons):
-            col_start = _slot_col(i)
-            emp, photo_path, is_on_leave = lookup_fn(person.name)
+        shown_idx = 0
+        for person in cr.persons:
+            emp, photo_path, is_on_leave, hidden = lookup_fn(person.name)
+            if hidden:
+                continue
+            col_start = _slot_col(base_slot + shown_idx)
+            shown_idx += 1
             _draw_person_block(ws, col_start, row, person, emp, photo_path, is_on_leave)
-        row += PHOTO_ROWS + LABEL_ROWS + 1   # 写真+3行ラベル+間ギャップ
+        row += PHOTO_ROWS + LABEL_ROWS + 1
+
+    # セクション内の全課行が終わったら、jimu/keiyaku/haken をセクション単位で集約して
+    # ひとつの「実務職/IA」セクションとしてセクション末尾に配置する（部のみ）。
+    if per_course_jimu_label:
+        all_jimu = [p for cr in course_rows for p in cr.jimu]
+        all_keiyaku = [p for cr in course_rows for p in cr.keiyaku]
+        all_haken = [p for cr in course_rows for p in cr.haken]
+        if all_jimu or all_keiyaku or all_haken:
+            ia_persons, non_ia_jimu = _split_ia(all_jimu, lookup_fn)
+            if ia_persons:
+                row = _build_extra_persons(ws, row, "IA", ia_persons, lookup_fn)
+            jimu_keiyaku = non_ia_jimu + all_keiyaku
+            if jimu_keiyaku or all_haken:
+                row = _build_extra_persons(ws, row, per_course_jimu_label,
+                                            jimu_keiyaku, lookup_fn,
+                                            haken=all_haken)
 
     return row, photo_row_starts
 
@@ -594,11 +685,16 @@ def _build_extra_persons(
     title: str,
     persons: list[PersonEntry],
     lookup_fn,
+    haken: list[PersonEntry] | None = None,
 ) -> int:
-    """SA（実務職）など、ラベル付きサイドブロックを描画。"""
-    if not persons:
+    """SA/実務職/IA などのサイドブロックを描画。年次は非表示。
+
+    haken が与えられた場合、persons (jimu+keiyaku) を 1 段目、haken を 2 段目に
+    強制改行して配置する（jimu+keiyaku の人数が少なくても改行）。
+    """
+    if not persons and not haken:
         return row_start
-    # SA ラベルは依頼ファイルでは I列(スロット2) に置かれているのでそれに合わせる
+
     label_col_start = _slot_col(1)
     label_col_end = _slot_content_end(label_col_start)
     _label_box(ws, row_start, label_col_start, label_col_end,
@@ -611,14 +707,40 @@ def _build_extra_persons(
     row += 1
 
     per_row = 7
-    base_slot = 1   # SA はスロット 2 (col I) から開始
-    for i, person in enumerate(persons):
-        if i > 0 and i % per_row == 0:
-            row += PERSON_TOTAL_H
-        slot = base_slot + (i % per_row)
-        col_start = _slot_col(slot) if slot < (1 + per_row) else _slot_col((i % per_row))
-        emp, photo_path, is_on_leave = lookup_fn(person.name)
-        _draw_person_block(ws, col_start, row, person, emp, photo_path, is_on_leave)
+    base_slot = 1
+    rendered_any = False
+
+    def _render_group(group: list[PersonEntry], row: int) -> tuple[int, bool]:
+        shown_idx = 0
+        for person in group:
+            emp, photo_path, is_on_leave, hidden = lookup_fn(person.name)
+            if hidden:
+                continue
+            if shown_idx > 0 and shown_idx % per_row == 0:
+                row += PERSON_TOTAL_H
+            slot = base_slot + (shown_idx % per_row)
+            col_start = _slot_col(slot)
+            _draw_person_block(ws, col_start, row, person, emp, photo_path, is_on_leave,
+                               show_year=False)
+            shown_idx += 1
+        return row, shown_idx > 0
+
+    # 1段目: jimu+keiyaku
+    if persons:
+        row, did_render = _render_group(persons, row)
+        if did_render:
+            rendered_any = True
+            if haken:
+                row += PERSON_TOTAL_H   # 派遣は強制的に一段下
+
+    # 2段目: haken
+    if haken:
+        row, did_render = _render_group(haken, row)
+        if did_render:
+            rendered_any = True
+
+    if not rendered_any:
+        return row_start
     return row + PERSON_TOTAL_H + 1
 
 
@@ -631,34 +753,42 @@ def build_workbook(
 
     stats["ambiguous"] = []   # 曖昧マッチ（複数候補）
 
+    stats["hidden_skipped"] = []
+
     def lookup(name: str):
+        """戻り値: (emp, photo_path, is_on_leave, is_hidden)"""
         candidates_active, quality = employee_service.repo.find_by_text(
             name, only_active=True, return_quality=True
         )
         if candidates_active:
             if len(candidates_active) == 1:
                 emp = candidates_active[0]
-                # 曖昧でない時のみ引用名を自動学習
                 if quality != "reference_name":
                     _learn_reference_name(employee_service, emp, name)
             else:
-                # 複数候補 → 1人目を採用するが警告ログに記録
                 emp = candidates_active[0]
                 cand_names = ", ".join(c.name for c in candidates_active[:5])
                 stats["ambiguous"].append(f"{name!r} → {len(candidates_active)}候補 [{cand_names}] (1人目採用)")
+            if getattr(emp, "hidden", False):
+                stats["hidden_skipped"].append(name)
+                return None, None, False, True
             photo_path = photo_service.resolve(emp.photo_path)
             if photo_path:
                 stats["placed"] += 1
-            return emp, photo_path, False
+            return emp, photo_path, False, False
 
-        # 在職で見つからなければ休職中含めて検索
+        # 休職中含めて検索
         all_candidates = employee_service.repo.find_by_text(name, only_active=False)
         if all_candidates:
+            emp = all_candidates[0]
+            if getattr(emp, "hidden", False):
+                stats["hidden_skipped"].append(name)
+                return None, None, False, True
             stats["on_leave"].append(name)
-            return all_candidates[0], None, True
+            return emp, None, True, False
 
         stats["unmatched"].append(name)
-        return None, None, False
+        return None, None, False, False
 
     wb = Workbook()
     wb.remove(wb.active)
@@ -728,55 +858,84 @@ def build_workbook(
             ws.row_dimensions[row].height = SPACER_HEIGHT
             row += 1
             for (_, p, slot) in slotted_pairs:
+                emp, photo_path, is_on_leave, hidden = lookup(p.name)
+                if hidden:
+                    continue
                 col_start = _slot_col(slot)
-                emp, photo_path, is_on_leave = lookup(p.name)
-                _draw_person_block(ws, col_start, row, p, emp, photo_path, is_on_leave)
+                _draw_person_block(ws, col_start, row, p, emp, photo_path, is_on_leave,
+                                   show_year=False)
             row += PHOTO_ROWS + LABEL_ROWS + 1
 
         # 各セクション（●営業課/●設計課）
+        # 部 (技術部・事業推進部) は per-課 で実務職セクションを差し込む
+        is_dept = branch.branch_name in ("技術部", "事業推進部")
+        per_course_label = _jimu_label(branch.branch_name) if is_dept else None
         section_photo_rows: dict[str, list[int]] = {}
         for section_name, course_rows in branch.sections.items():
-            row, photo_starts = _build_section(ws, row, section_name, course_rows, lookup)
+            row, photo_starts = _build_section(ws, row, section_name, course_rows,
+                                                lookup, per_course_jimu_label=per_course_label)
             section_photo_rows[section_name] = photo_starts
 
-        # 派遣社員＋契約社員 → 設計課の最終課行に続けて、空きスロットに配置
-        extras = list(branch.haken) + list(branch.keiyaku)
+        # 派遣社員 → 設計課の最終課行に続けて配置（支店のみ）
+        # 部 (技術部・事業推進部) は per-課 実務職セクション内で派遣も既に表示するため
+        # branch-level の haken 配置は重複になるのでスキップ。
+        extras = [] if is_dept else list(branch.haken)
         if extras:
             design_section_name = next(
                 (sn for sn in section_photo_rows if "設計" in sn), None
             )
             target_row: int | None = None
+            base_slot = 0
             occupied_slots = 0
             if design_section_name:
                 starts = section_photo_rows[design_section_name]
                 design_courses = branch.sections.get(design_section_name, [])
                 if len(starts) >= 2:
                     target_row = starts[1]
-                    occupied_slots = (len(design_courses[1].persons)
-                                       if len(design_courses) >= 2 else 0)
+                    if len(design_courses) >= 2:
+                        if not design_courses[1].course_name:
+                            base_slot = 1   # 継続行は slot1 開始
+                        occupied_slots = len(design_courses[1].persons)
                 elif starts:
                     target_row = starts[0]
                     occupied_slots = (len(design_courses[0].persons)
                                        if design_courses else 0)
 
             if target_row is not None:
-                for i, person in enumerate(extras):
-                    slot = occupied_slots + i
+                shown_idx = 0
+                for person in extras:
+                    emp, photo_path, is_on_leave, hidden = lookup(person.name)
+                    if hidden:
+                        continue
+                    slot = base_slot + occupied_slots + shown_idx
+                    shown_idx += 1
                     col_start = _slot_col(slot)
-                    emp, photo_path, is_on_leave = lookup(person.name)
                     _draw_person_block(ws, col_start, target_row, person,
                                        emp, photo_path, is_on_leave)
             else:
-                # 設計課が無い場合は SA の上に独立行で配置
-                for i, person in enumerate(extras):
-                    col_start = _slot_col(i)
-                    emp, photo_path, is_on_leave = lookup(person.name)
+                shown_idx = 0
+                for person in extras:
+                    emp, photo_path, is_on_leave, hidden = lookup(person.name)
+                    if hidden:
+                        continue
+                    col_start = _slot_col(shown_idx)
+                    shown_idx += 1
                     _draw_person_block(ws, col_start, row, person,
                                        emp, photo_path, is_on_leave)
                 row += PHOTO_ROWS + LABEL_ROWS + 1
 
-        # SA（実務職）はメイン領域の下、I列(スロット2)から
-        row = _build_extra_persons(ws, row, "SA", branch.jimu, lookup)
+        # 支店の場合のみ、SA セクションを branch 全体で集約配置
+        # （部の場合は各課直下に per-課 実務職を既に描画済み）
+        # IA 区分の人は別途「IA」セクションに分離して先に描画する。
+        if not is_dept:
+            ia_persons, non_ia_jimu = _split_ia(branch.jimu, lookup)
+            if ia_persons:
+                row = _build_extra_persons(ws, row, "IA", ia_persons, lookup)
+            sa_persons = non_ia_jimu + list(branch.keiyaku)
+            if sa_persons:
+                row = _build_extra_persons(ws, row,
+                                            _jimu_label(branch.branch_name),
+                                            sa_persons, lookup)
 
     return wb, stats
 

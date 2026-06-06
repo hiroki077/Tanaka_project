@@ -1,7 +1,7 @@
 from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
-from sqlalchemy import String, Integer, DateTime, ForeignKey, UniqueConstraint, Text
+from sqlalchemy import String, Integer, DateTime, ForeignKey, UniqueConstraint, Text, Boolean
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -44,6 +44,10 @@ class Employee(Base):
     )
     photo_path: Mapped[str | None] = mapped_column(Text)
     display_order: Mapped[int] = mapped_column(Integer, default=0)
+    # 出力時に非表示にするフラグ（本社兼務などで体制表に出したくない人物）
+    hidden: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # IA 区分（事務女性のうち IA に分類される人。出力時に「IA」セクションへ分離）
+    is_ia: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     note: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     updated_at: Mapped[datetime] = mapped_column(
