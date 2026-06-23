@@ -33,6 +33,19 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: Embed build version into src/_version.py
+        shell: bash
+        run: |
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          cat > src/_version.py <<EOF
+          """ビルド時に CI が書き換える。直接編集しない。"""
+
+          __version__ = "${GITHUB_SHA::7}"
+          __build_sha__ = "${GITHUB_SHA}"
+          __build_time__ = "${BUILD_TIME}"
+          EOF
+          cat src/_version.py
+
       - name: Build EXE with PyInstaller
         run: |
           pyinstaller `
@@ -51,6 +64,8 @@ jobs:
             --hidden-import src.services.employee_service `
             --hidden-import src.services.photo_service `
             --hidden-import src.services.excel_export_service `
+            --hidden-import src.services.update_service `
+            --hidden-import src._version `
             --hidden-import src.gui `
             --hidden-import src.gui.main_window `
             --hidden-import src.gui.employee_tab `
