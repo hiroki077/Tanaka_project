@@ -335,6 +335,10 @@ def _file_hash(path: Path) -> str:
 _PLACEHOLDER_RE = re.compile(PLACEHOLDER_PATTERN)
 _DETAIL_RE = re.compile(r"(?P<key>[^#]+?)(?:#id=(?P<id>\d+))?$")
 
+# 写真をセル枠の内側に数pxだけ縮めて配置するためのオフセット（EMU 単位）。
+# 1 px ≒ 9525 EMU (96DPI 換算)。0 だと写真縁がセル境界に一致して青枠を覆い隠す。
+_PHOTO_INSET_EMU = 19050  # 約 2 px
+
 
 class ExcelExportService:
     def __init__(
@@ -586,12 +590,15 @@ class ExcelExportService:
         except Exception:
             pass
 
+        # 写真をセル枠の内側に数px分だけ縮める。
+        # セル境界ぴったりだとテンプレの青枠が写真下に隠れて見えなくなるため、
+        # 4辺すべてに内側オフセットを入れて枠線を露出させる。
         anchor = TwoCellAnchor(
             editAs="oneCell",
-            _from=AnchorMarker(col=top_left_col_0, colOff=0,
-                               row=top_left_row_0, rowOff=0),
-            to=AnchorMarker(col=bottom_right_col_0, colOff=0,
-                            row=bottom_right_row_0, rowOff=0),
+            _from=AnchorMarker(col=top_left_col_0, colOff=_PHOTO_INSET_EMU,
+                               row=top_left_row_0, rowOff=_PHOTO_INSET_EMU),
+            to=AnchorMarker(col=bottom_right_col_0, colOff=-_PHOTO_INSET_EMU,
+                            row=bottom_right_row_0, rowOff=-_PHOTO_INSET_EMU),
         )
         img.anchor = anchor
         ws.add_image(img)

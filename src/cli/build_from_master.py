@@ -410,14 +410,23 @@ def _keep_side(side):
     return side if (side is not None and side.style) else None
 
 
+_PHOTO_INSET_EMU = 19050  # 約 2 px。0 だと写真縁がセル境界に一致して青枠を覆い隠す
+
+
 def _insert_photo(ws, col0_1: int, row0_1: int, w_cols: int, h_rows: int, path: Path) -> None:
     """セル範囲にぴったり貼り付ける。img.width/height はあえてセットしない
-    （TwoCellAnchor がストレッチを担うため、px指定すると逆効果になる）。"""
+    （TwoCellAnchor がストレッチを担うため、px指定すると逆効果になる）。
+
+    `_PHOTO_INSET_EMU` 分だけ内側にオフセットして、テンプレートの青枠が
+    写真下に隠れず4辺すべて見えるようにする。
+    """
     img = XLImage(str(path))
     anchor = TwoCellAnchor(
         editAs="oneCell",
-        _from=AnchorMarker(col=col0_1 - 1, colOff=0, row=row0_1 - 1, rowOff=0),
-        to=AnchorMarker(col=col0_1 - 1 + w_cols, colOff=0, row=row0_1 - 1 + h_rows, rowOff=0),
+        _from=AnchorMarker(col=col0_1 - 1, colOff=_PHOTO_INSET_EMU,
+                           row=row0_1 - 1, rowOff=_PHOTO_INSET_EMU),
+        to=AnchorMarker(col=col0_1 - 1 + w_cols, colOff=-_PHOTO_INSET_EMU,
+                        row=row0_1 - 1 + h_rows, rowOff=-_PHOTO_INSET_EMU),
     )
     img.anchor = anchor
     ws.add_image(img)
