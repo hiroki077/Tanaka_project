@@ -103,10 +103,14 @@ class MainWindow(QMainWindow):
         action_quit.triggered.connect(self.close)
         file_menu.addAction(action_quit)
 
-        # メニューバー直下に「更新を確認…」
-        action_check_update = QAction("更新を確認(&U)…", self)
+        # 「更新を確認…」をメニューバー直下に置く。
+        # macOS の統合メニューバーは QMenu のタイトルしか表示しないため、
+        # menubar.addAction() ではなく独立した QMenu として作成する。
+        update_menu = menubar.addMenu("更新を確認(&U)")
+        action_check_update = QAction("今すぐ確認…", self)
+        action_check_update.setMenuRole(QAction.MenuRole.NoRole)
         action_check_update.triggered.connect(lambda: self._check_update(manual=True))
-        menubar.addAction(action_check_update)
+        update_menu.addAction(action_check_update)
 
         help_menu = menubar.addMenu("ヘルプ(&H)")
         action_about = QAction("バージョン情報(&A)", self)
