@@ -54,6 +54,8 @@ jobs:
             --name Roster `
             --add-data "assets;assets" `
             --collect-all PySide6 `
+            --collect-data certifi `
+            --hidden-import certifi `
             --hidden-import src `
             --hidden-import src.main `
             --hidden-import src.config `

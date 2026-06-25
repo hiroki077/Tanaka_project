@@ -6,6 +6,7 @@
 from __future__ import annotations
 import json
 import os
+import ssl
 import subprocess
 import sys
 import urllib.request
@@ -13,7 +14,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+import certifi
+
 from .._version import __build_sha__
+
+
+def _ssl_context() -> ssl.SSLContext:
+    """certifi の CA bundle を使う SSL コンテキストを返す。
+
+    PyInstaller 同梱の Python は OS の証明書ストアを参照できないため、
+    certifi をバンドルしてここから読ませる。これをしないと Windows 環境で
+    `CERTIFICATE_VERIFY_FAILED` が出る。
+    """
+    return ssl.create_default_context(cafile=certifi.where())
 
 
 REPO_OWNER = "hiroki077"
@@ -67,7 +80,7 @@ def _fetch_latest_release(timeout: float = 10.0) -> dict:
             "User-Agent": _USER_AGENT,
         },
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -115,7 +128,7 @@ def download_exe(
     """
     req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
         total = int(resp.headers.get("Content-Length") or 0)
         written = 0
         chunk = 64 * 1024
