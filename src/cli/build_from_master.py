@@ -413,6 +413,22 @@ def _keep_side(side):
 _PHOTO_INSET_EMU = 28575  # 約 3 px。0 だと写真縁がセル境界に一致して青枠を覆い隠す
 
 
+def _branch_title_font_size(name: str) -> int:
+    """部署名の長さに応じてタイトルフォントサイズを返す。
+
+    タイトル領域は固定幅（DATA_COL_END 列マージ）のため、
+    文字数が増えると右端で見切れてしまう。閾値ベースで段階的に縮小する。
+    """
+    n = len(name or "")
+    if n <= 8:
+        return 28
+    if n <= 10:
+        return 24
+    if n <= 13:
+        return 20
+    return 16
+
+
 def _insert_photo(ws, col0_1: int, row0_1: int, w_cols: int, h_rows: int, path: Path) -> None:
     """セル範囲にぴったり貼り付ける。img.width/height はあえてセットしない
     （TwoCellAnchor がストレッチを担うため、px指定すると逆効果になる）。
@@ -450,13 +466,14 @@ def _is_ia_member(emp) -> bool:
 
 
 def _person_display_name(person: PersonEntry, emp) -> str:
-    """漢字氏名の表示。役職記号は基本除去するが「兼）」だけは復元する。
+    """漢字氏名の表示。役職記号は基本除去するが「兼)」だけは復元する。
     末尾の (IA) は別セクションラベルに移すので氏名からは除去。
+    「）」は半角「)」を使う（クライアント要望: 全幅だと右余白が大きく見えるため）。
     """
     name = emp.name if emp else person.name
     name = _strip_ia_suffix(name)
     if "兼" in (person.marks or ""):
-        return f"兼）{name}"
+        return f"兼){name}"
     return name
 
 
@@ -499,11 +516,15 @@ def _draw_person_block(
     photo_path: Path | None,
     is_on_leave: bool,
     show_year: bool = True,
+    force_blank_year: bool = False,
 ) -> None:
     """1人分（写真8行 + カナ・漢字・年 の3行ラベル）を描画。
 
     人物スロット: col_start_1 から 5 列 (col_start_1+0 〜 col_start_1+4)、
     最右端 (+5) は次スロットとの間のギャップ。
+
+    `force_blank_year=True` の場合、年次行のセル枠は確保するが、
+    年次テキストは出力しない（支店長など、支店付と高さを揃えるため）。
     """
     _set_block_row_heights(ws, row_start_1)
 
@@ -554,14 +575,19 @@ def _draw_person_block(
     _label_text(ws, label_row_kana, col_start_1, photo_col_end,
                 kana, size=10, color=COLOR_TEXT_KANA, align="center")
 
-    # 漢字: 全幅中央寄せ 11pt **非ボールド** #111111。
-    # 役職記号は基本除去するが「兼）」だけは残す。
+    # 漢字: 11pt **非ボールド** #111111。役職記号は基本除去するが「兼)」だけは残す。
+    # 「兼)」が付く時は中央寄せだと記号がスロット中央に来てしまい不自然なので、
+    # わずかに左寄せ (horizontal="left") にしてラベル先頭から開始するよう揃える。
+    display_name = _person_display_name(person, emp)
+    name_align = "left" if display_name.startswith("兼)") else "center"
     _label_text(ws, label_row_kanji, col_start_1, photo_col_end,
-                _person_display_name(person, emp),
-                size=11, bold=False, color=COLOR_TEXT_KANJI, align="center")
+                display_name,
+                size=11, bold=False, color=COLOR_TEXT_KANJI, align=name_align)
 
     # 年: show_year=True かつ値がある時のみ書き込み。「再」は除去
-    if show_year and year_display:
+    # force_blank_year=True なら、枠（border_rows）には年行が含まれるが、
+    # テキストは出力せず空白行を確保する。
+    if show_year and year_display and not force_blank_year:
         cleaned_year = _normalize_year_display(year_display)
         if cleaned_year:
             _label_text(ws, label_row_year, col_start_1, photo_col_end,
@@ -587,6 +613,20 @@ def _section_title_format(section_name: str) -> str:
     if 2 <= len(name) <= 4:
         return " ".join(name)
     return name
+
+
+def _section_label_font_size(display_text: str) -> int:
+    """セクション/課ラベルの表示文字数からフォントサイズを返す。
+
+    ラベルボックスは 1 スロット幅（約 105px）に収まる必要があり、
+    そのままだと長い名前（例: 'マーケティング室'）が見切れる。
+    """
+    n = len(display_text or "")
+    if n <= 5:
+        return 12
+    if n <= 7:
+        return 10
+    return 9
 
 
 def _slot_col(slot_index: int) -> int:
@@ -622,9 +662,11 @@ def _build_section(
         if not is_continuation:
             # セクションヘッダ（営業課/設計課）は最初の課にだけ表示
             if cr_idx == 0:
+                section_display = _section_title_format(section_name)
                 _label_box(ws, row, SHEET_START_COL, label_col_end,
-                           _section_title_format(section_name),
-                           size=12, bold=True,
+                           section_display,
+                           size=_section_label_font_size(section_display),
+                           bold=True,
                            fill_color=COLOR_SECTION_BG, text_color=COLOR_TEXT_DARK,
                            height=SECTION_HEADER_HEIGHT, left_thick=True)
                 row += 1
@@ -634,7 +676,8 @@ def _build_section(
             if cr.course_name:
                 _label_box(ws, row, SHEET_START_COL, label_col_end,
                            cr.course_name,
-                           size=12, bold=True,
+                           size=_section_label_font_size(cr.course_name),
+                           bold=True,
                            fill_color=COLOR_SECTION_BG, text_color=COLOR_TEXT_DARK,
                            height=SUBSECTION_HEIGHT, left_thick=True)
                 row += 1
@@ -695,25 +738,35 @@ def _build_extra_persons(
     persons: list[PersonEntry],
     lookup_fn,
     haken: list[PersonEntry] | None = None,
+    show_title: bool = True,
 ) -> int:
     """SA/実務職/IA などのサイドブロックを描画。年次は非表示。
 
     haken が与えられた場合、persons (jimu+keiyaku) を 1 段目、haken を 2 段目に
     強制改行して配置する（jimu+keiyaku の人数が少なくても改行）。
+
+    `show_title=False` を指定するとセクション見出し（ラベルボックス）を
+    描画しない。派遣社員のように上部表記を出したくない場合に使う。
     """
     if not persons and not haken:
         return row_start
 
-    label_col_start = _slot_col(1)
-    label_col_end = _slot_content_end(label_col_start)
-    _label_box(ws, row_start, label_col_start, label_col_end,
-               title,
-               size=12, bold=True,
-               fill_color=COLOR_SUBHEADER_BG, text_color=COLOR_TEXT_WHITE,
-               height=SECTION_HEADER_HEIGHT, left_thick=True)
-    row = row_start + 1
-    ws.row_dimensions[row].height = SPACER_HEIGHT
-    row += 1
+    if show_title:
+        label_col_start = _slot_col(1)
+        label_col_end = _slot_content_end(label_col_start)
+        _label_box(ws, row_start, label_col_start, label_col_end,
+                   title,
+                   size=12, bold=True,
+                   fill_color=COLOR_SUBHEADER_BG, text_color=COLOR_TEXT_WHITE,
+                   height=SECTION_HEADER_HEIGHT, left_thick=True)
+        row = row_start + 1
+        ws.row_dimensions[row].height = SPACER_HEIGHT
+        row += 1
+    else:
+        # 見出しなし: row_start から直接 SPACER + 写真行に入る
+        row = row_start
+        ws.row_dimensions[row].height = SPACER_HEIGHT
+        row += 1
 
     per_row = 7
     base_slot = 1
@@ -820,9 +873,12 @@ def build_workbook(
         _setup_sheet(ws)
         _setup_page(ws)
 
-        # タイトル: 明るい青 #0078D4, 28pt Meiryo UI bold WHITE, 左寄せ indent=1, 高さ 50.25
+        # タイトル: 明るい青 #0078D4, Meiryo UI bold WHITE, 左寄せ indent=1, 高さ 50.25
+        # 長い部署名は自動でフォントサイズを下げ、タイトル行に収まるようにする。
         tcell = ws.cell(row=1, column=1, value=branch.branch_name)
-        tcell.font = Font(name=FONT_NAME, bold=True, size=28, color=COLOR_TEXT_WHITE)
+        tcell.font = Font(name=FONT_NAME, bold=True,
+                          size=_branch_title_font_size(branch.branch_name),
+                          color=COLOR_TEXT_WHITE)
         tcell.fill = PatternFill("solid", fgColor=COLOR_TITLE_BG)
         tcell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
         ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=DATA_COL_END)
@@ -830,25 +886,36 @@ def build_workbook(
         row = 3
 
         # 上位役職（支店長 = 濃紺、支店付/兼務 等 = 中青）
-        # 兼務 はラベルを「支店付」にリネーム、人物 display に「兼）」を付与、
-        # さらに視覚的に分離するため 1 スロット飛ばして配置する。
+        # 兼務 はラベルを「支店付」にリネーム、人物 display に「兼)」を付与。
+        # スロット配置: 支店長 → 支店付 の切り替わりだけギャップを入れ、
+        # 支店付 同士が連続する場合は隣接させて詰める（クライアント要望）。
         if branch.top_positions:
             slotted_pairs: list[tuple[str, PersonEntry, int]] = []
             next_slot = 0
+            prev_was_branch_attached = False
             for orig_label, raw_name in branch.top_positions:
                 p = _parse_person(raw_name, None)
                 if p is None:
                     continue
-                if orig_label.strip() == "兼務":
+                # 「兼務」も「支店付」もマスター上の上位役職ラベルとして両方出現する。
+                # 表示はどちらも「支店付」に統一し、隣接配置の対象にする。
+                # ただし「兼」マーカー（人物名先頭の "兼)" 表示）は本来の意味の
+                # 兼務エントリにのみ付与する。
+                normalized_label = orig_label.strip()
+                is_branch_attached = normalized_label in ("兼務", "支店付")
+                if is_branch_attached:
                     display_label = "支店付"
-                    if "兼" not in (p.marks or ""):
+                    if normalized_label == "兼務" and "兼" not in (p.marks or ""):
                         p.marks = "兼" + (p.marks or "")
-                    # 兼務エントリは 1 スロット飛ばし
-                    next_slot = max(next_slot + 1, 2)
+                    # 支店長 → 支店付 の切り替わり時のみ 1 スロット飛ばす。
+                    # 支店付 → 支店付 連続時はギャップなし。
+                    if not prev_was_branch_attached:
+                        next_slot = max(next_slot + 1, 2)
                 else:
                     display_label = orig_label
                 slotted_pairs.append((display_label, p, next_slot))
                 next_slot += 1
+                prev_was_branch_attached = is_branch_attached
 
             for i, (lbl, _, slot) in enumerate(slotted_pairs):
                 col_start = _slot_col(slot)
@@ -866,13 +933,17 @@ def build_workbook(
             row += 1
             ws.row_dimensions[row].height = SPACER_HEIGHT
             row += 1
-            for (_, p, slot) in slotted_pairs:
+            for (lbl, p, slot) in slotted_pairs:
                 emp, photo_path, is_on_leave, hidden = lookup(p.name)
                 if hidden:
                     continue
                 col_start = _slot_col(slot)
+                # 支店付 のみ年次を実表示。支店長 は枠は確保するが空欄にして
+                # 縦位置を 支店付 と揃える。
+                is_branch_attached = (lbl == "支店付")
                 _draw_person_block(ws, col_start, row, p, emp, photo_path, is_on_leave,
-                                   show_year=False)
+                                   show_year=True,
+                                   force_blank_year=not is_branch_attached)
             row += PHOTO_ROWS + LABEL_ROWS + 1
 
         # 各セクション（●営業課/●設計課）
@@ -885,62 +956,24 @@ def build_workbook(
                                                 lookup, per_course_jimu_label=per_course_label)
             section_photo_rows[section_name] = photo_starts
 
-        # 派遣社員 → 設計課の最終課行に続けて配置（支店のみ）
+        # 支店の場合のみ、IA / 派遣・契約 / SA セクションをページ下部に集約配置。
+        # 契約社員（keiyaku）と派遣社員（haken）はマスター上隣接列で管理されており、
+        # 同じ右枠グループとして扱う。SA セクションの直上に「ラベルなしブロック」として
+        # 統合配置し、表示順は契約社員 → 派遣社員 の順。
         # 部 (技術部・事業推進部) は per-課 実務職セクション内で派遣も既に表示するため
-        # branch-level の haken 配置は重複になるのでスキップ。
-        extras = [] if is_dept else list(branch.haken)
-        if extras:
-            design_section_name = next(
-                (sn for sn in section_photo_rows if "設計" in sn), None
-            )
-            target_row: int | None = None
-            base_slot = 0
-            occupied_slots = 0
-            if design_section_name:
-                starts = section_photo_rows[design_section_name]
-                design_courses = branch.sections.get(design_section_name, [])
-                if len(starts) >= 2:
-                    target_row = starts[1]
-                    if len(design_courses) >= 2:
-                        if not design_courses[1].course_name:
-                            base_slot = 1   # 継続行は slot1 開始
-                        occupied_slots = len(design_courses[1].persons)
-                elif starts:
-                    target_row = starts[0]
-                    occupied_slots = (len(design_courses[0].persons)
-                                       if design_courses else 0)
-
-            if target_row is not None:
-                shown_idx = 0
-                for person in extras:
-                    emp, photo_path, is_on_leave, hidden = lookup(person.name)
-                    if hidden:
-                        continue
-                    slot = base_slot + occupied_slots + shown_idx
-                    shown_idx += 1
-                    col_start = _slot_col(slot)
-                    _draw_person_block(ws, col_start, target_row, person,
-                                       emp, photo_path, is_on_leave)
-            else:
-                shown_idx = 0
-                for person in extras:
-                    emp, photo_path, is_on_leave, hidden = lookup(person.name)
-                    if hidden:
-                        continue
-                    col_start = _slot_col(shown_idx)
-                    shown_idx += 1
-                    _draw_person_block(ws, col_start, row, person,
-                                       emp, photo_path, is_on_leave)
-                row += PHOTO_ROWS + LABEL_ROWS + 1
-
-        # 支店の場合のみ、SA セクションを branch 全体で集約配置
-        # （部の場合は各課直下に per-課 実務職を既に描画済み）
-        # IA 区分の人は別途「IA」セクションに分離して先に描画する。
+        # branch-level の haken/keiyaku 配置はスキップ。
         if not is_dept:
             ia_persons, non_ia_jimu = _split_ia(branch.jimu, lookup)
             if ia_persons:
                 row = _build_extra_persons(ws, row, "IA", ia_persons, lookup)
-            sa_persons = non_ia_jimu + list(branch.keiyaku)
+            non_regular = list(branch.keiyaku) + list(branch.haken)
+            if non_regular:
+                # 派遣・契約はラベル見出しを出さず、写真行のみで配置する
+                row = _build_extra_persons(ws, row, "派遣・契約",
+                                            non_regular, lookup,
+                                            show_title=False)
+            # SA セクションには事務(jimu) のみを残す（契約社員は上の統合ブロックへ）
+            sa_persons = non_ia_jimu
             if sa_persons:
                 row = _build_extra_persons(ws, row,
                                             _jimu_label(branch.branch_name),
