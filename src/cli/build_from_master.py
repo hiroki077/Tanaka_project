@@ -410,7 +410,7 @@ def _keep_side(side):
     return side if (side is not None and side.style) else None
 
 
-_PHOTO_INSET_EMU = 19050  # 約 2 px。0 だと写真縁がセル境界に一致して青枠を覆い隠す
+_PHOTO_INSET_EMU = 47625  # 約 5 px。0 だと写真縁がセル境界に一致して青枠を覆い隠す
 
 
 def _insert_photo(ws, col0_1: int, row0_1: int, w_cols: int, h_rows: int, path: Path) -> None:

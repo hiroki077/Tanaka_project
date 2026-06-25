@@ -337,7 +337,7 @@ _DETAIL_RE = re.compile(r"(?P<key>[^#]+?)(?:#id=(?P<id>\d+))?$")
 
 # 写真をセル枠の内側に数pxだけ縮めて配置するためのオフセット（EMU 単位）。
 # 1 px ≒ 9525 EMU (96DPI 換算)。0 だと写真縁がセル境界に一致して青枠を覆い隠す。
-_PHOTO_INSET_EMU = 19050  # 約 2 px
+_PHOTO_INSET_EMU = 47625  # 約 5 px
 
 
 class ExcelExportService:
