@@ -209,7 +209,7 @@ UNIQUE制約: (template_signature, sheet_name, cell_address)
 ## 7. ファイル/フォルダ構成（プロジェクト）
 
 ```
-Miki_application/
+Tanaka_application/
 ├── docs/
 │   └── DESIGN.md           # 本設計書
 ├── src/

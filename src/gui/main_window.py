@@ -83,7 +83,7 @@ class MainWindow(QMainWindow):
         self._update_thread: _UpdateCheckThread | None = None
         self._download_thread: _DownloadThread | None = None
 
-        self.setWindowTitle("Miki 体制表ジェネレーター")
+        self.setWindowTitle("体制表ジェネレーター")
         self.resize(1100, 720)
 
         self._build_menu()
@@ -158,7 +158,7 @@ class MainWindow(QMainWindow):
         sha_part = f"\nビルド: {sha[:7]}" if sha else "\nビルド: dev"
         QMessageBox.about(
             self, "バージョン情報",
-            "Miki 体制表ジェネレーター v0.2\n"
+            "体制表ジェネレーター v0.3\n"
             "顔写真付き Excel 体制表の自動生成ツール"
             + sha_part
         )

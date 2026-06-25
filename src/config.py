@@ -5,7 +5,7 @@ OneDrive 等のクラウド同期フォルダを指定することで複数PC間
 
 設定優先順位:
 1. settings.json の data_dir
-2. プラットフォーム既定 (Windows: %APPDATA%/MikiApp, macOS: ~/Library/Application Support/MikiApp)
+2. プラットフォーム既定 (Windows: %APPDATA%/Roster, macOS: ~/Library/Application Support/Roster)
 """
 from __future__ import annotations
 import json
