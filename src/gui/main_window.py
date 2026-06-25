@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 import sys
 from pathlib import Path
 
@@ -259,7 +260,11 @@ class MainWindow(QMainWindow):
                     f"更新ファイルのダウンロードに失敗しました。\n\n{result}"
                 )
                 return
-            # 成功 → ヘルパ bat 起動して終了
+            # 成功 → ヘルパ bat 起動して即座に終了。
+            # Qt 内部のクリーンアップで終了が数秒遅延すると、bat 側が
+            # 古いプロセス終了を検知できず ZIP のロックが解けない問題が出るため、
+            # ウィンドウを閉じた上で QApplication.quit() を呼び、
+            # フェイルセーフで 1.5 秒後に強制終了する。
             try:
                 install_and_restart(new_zip)
             except Exception as e:  # noqa: BLE001
@@ -268,7 +273,9 @@ class MainWindow(QMainWindow):
                     f"更新スクリプトの起動に失敗しました。\n\n{e}"
                 )
                 return
+            self.close()
             QApplication.quit()
+            QTimer.singleShot(1500, lambda: os._exit(0))
 
         thread.progress.connect(on_progress)
         thread.done.connect(on_done)

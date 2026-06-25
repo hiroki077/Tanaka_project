@@ -163,6 +163,39 @@ def download_asset(
 download_exe = download_asset
 
 
+def cleanup_leftover_update_files() -> None:
+    """前回のアップデート時に取り残された一時ファイル/フォルダを掃除する。
+
+    onedir 構成での想定残骸（install_root 直下、Roster/ と同階層）:
+        - Roster.zip          : ダウンロード済み更新 zip
+        - _roster_new/        : 展開先一時フォルダ
+        - _roster_updater.bat : 更新スクリプト（self-delete に失敗した場合）
+
+    bat はそれぞれ削除する経路を持っているが、ユーザが途中で電源を切るなど
+    例外的な状況で残ることがある。起動の度に静かに掃除する。
+    frozen 実行時のみ動作（dev 実行時は無効）。
+    """
+    if not is_frozen():
+        return
+    try:
+        current_exe = Path(sys.executable).resolve()
+        install_root = current_exe.parent.parent
+    except Exception:
+        return
+
+    for name in ("Roster.zip", "_roster_new", "_roster_updater.bat"):
+        target = install_root / name
+        if not target.exists():
+            continue
+        try:
+            if target.is_dir():
+                shutil.rmtree(target, ignore_errors=True)
+            else:
+                target.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def install_and_restart(downloaded_zip: Path) -> None:
     """ダウンロードした Roster.zip を解凍し、フォルダ差し替え方式で再起動する。
 
@@ -208,7 +241,9 @@ def install_and_restart(downloaded_zip: Path) -> None:
     bat_path = install_root / "_roster_updater.bat"
     log_path = install_root / "_roster_updater.log"
 
-    # フォルダ差し替え手順を bat に書き出す。失敗時は最大 30 回（=30 秒）リトライ。
+    # フォルダ差し替え手順を bat に書き出す。
+    # 親プロセス終了後にロックハンドル解放を待つため 3 秒バッファを入れる。
+    # 失敗時は最大 30 回（=30 秒）リトライ。各経路で残骸（zip, _roster_new）を必ず削除。
     bat_content = (
         "@echo off\r\n"
         "setlocal\r\n"
@@ -227,7 +262,8 @@ def install_and_restart(downloaded_zip: Path) -> None:
         '  timeout /t 1 /nobreak >NUL\r\n'
         "  goto wait_proc\r\n"
         ")\r\n"
-        'timeout /t 1 /nobreak >NUL\r\n'
+        'echo [%DATE% %TIME%] parent gone, waiting 3s for handles >>"%LOG%"\r\n'
+        'timeout /t 3 /nobreak >NUL\r\n'
         "set RETRY=0\r\n"
         ":do_remove\r\n"
         'rmdir /s /q "%CUR_DIR%" >>"%LOG%" 2>&1\r\n'
@@ -235,7 +271,7 @@ def install_and_restart(downloaded_zip: Path) -> None:
         "  set /a RETRY+=1\r\n"
         "  if %RETRY% GEQ 30 (\r\n"
         '    echo remove old folder failed >>"%LOG%"\r\n'
-        "    exit /b 1\r\n"
+        "    goto cleanup_only\r\n"
         "  )\r\n"
         '  timeout /t 1 /nobreak >NUL\r\n'
         "  goto do_remove\r\n"
@@ -244,11 +280,17 @@ def install_and_restart(downloaded_zip: Path) -> None:
         'move "%NEW_DIR%" "%CUR_DIR%" >>"%LOG%" 2>&1\r\n'
         "if errorlevel 1 (\r\n"
         '  echo move failed >>"%LOG%"\r\n'
-        "  exit /b 1\r\n"
+        "  goto cleanup_only\r\n"
         ")\r\n"
+        'echo [%DATE% %TIME%] swap done >>"%LOG%"\r\n'
         'rmdir /s /q "%EXTRACT%" >>"%LOG%" 2>&1\r\n'
         'del "%ZIP%" >>"%LOG%" 2>&1\r\n'
         'start "" "%CUR_DIR%\\Roster.exe"\r\n'
+        '(goto) 2>nul & del "%~f0"\r\n'
+        ":cleanup_only\r\n"
+        # 失敗経路でも残骸ファイルは最低限消す
+        'rmdir /s /q "%EXTRACT%" >>"%LOG%" 2>&1\r\n'
+        'del "%ZIP%" >>"%LOG%" 2>&1\r\n'
         '(goto) 2>nul & del "%~f0"\r\n'
     )
     bat_path.write_text(bat_content, encoding="cp932")

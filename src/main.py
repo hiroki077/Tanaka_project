@@ -18,6 +18,7 @@ from .config import Settings, DataPaths
 from .db import Database
 from .lock import DataLock
 from .services import EmployeeService, PhotoService
+from .services.update_service import cleanup_leftover_update_files
 from .gui.main_window import MainWindow
 
 
@@ -62,6 +63,10 @@ def _confirm_lock_takeover(holder) -> bool:
 def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("Miki 体制表ジェネレーター")
+
+    # 前回のアップデート時に残った zip / _roster_new / 更新 bat 等を静かに削除。
+    # 残ったままだと容量を圧迫し、また「どのファイルが本物？」とユーザが混乱する。
+    cleanup_leftover_update_files()
 
     settings = Settings()
     if not settings.is_configured:
