@@ -157,7 +157,7 @@ class MainWindow(QMainWindow):
         sha_part = f"\nビルド: {sha[:7]}" if sha else "\nビルド: dev"
         QMessageBox.about(
             self, "バージョン情報",
-            "Miki 体制表ジェネレーター v0.1\n"
+            "Miki 体制表ジェネレーター v0.2\n"
             "顔写真付き Excel 体制表の自動生成ツール"
             + sha_part
         )
