@@ -272,7 +272,7 @@ COLOR_TEXT_LEAVE = "888888"
 COLOR_BORDER_THIN = "6E8FB7"   # 人物ブロック細枠
 COLOR_BORDER_THICK = "1F4E79"  # ラベル左罫など
 
-THIN_BORDER = Side(style="thin", color=COLOR_BORDER_THIN)
+THIN_BORDER = Side(style="medium", color=COLOR_BORDER_THIN)
 THICK_BORDER_DARK = Side(style="thick", color=COLOR_BORDER_THICK)
 
 
@@ -410,7 +410,7 @@ def _keep_side(side):
     return side if (side is not None and side.style) else None
 
 
-_PHOTO_INSET_EMU = 47625  # 約 5 px。0 だと写真縁がセル境界に一致して青枠を覆い隠す
+_PHOTO_INSET_EMU = 28575  # 約 3 px。0 だと写真縁がセル境界に一致して青枠を覆い隠す
 
 
 def _insert_photo(ws, col0_1: int, row0_1: int, w_cols: int, h_rows: int, path: Path) -> None:
