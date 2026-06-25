@@ -46,10 +46,10 @@ jobs:
           EOF
           cat src/_version.py
 
-      - name: Build EXE with PyInstaller
+      - name: Build EXE with PyInstaller (onedir)
         run: |
           pyinstaller `
-            --onefile `
+            --onedir `
             --windowed `
             --name Roster `
             --add-data "assets;assets" `
@@ -83,13 +83,21 @@ jobs:
 
       - name: Verify build
         run: |
-          if (Test-Path dist/Roster.exe) {
-            $size = (Get-Item dist/Roster.exe).Length / 1MB
-            Write-Host "✅ Roster.exe built: $($size.ToString('0.0')) MB"
+          if (Test-Path dist/Roster/Roster.exe) {
+            $size = (Get-Item dist/Roster/Roster.exe).Length / 1MB
+            Write-Host "✅ Roster onedir built: Roster.exe = $($size.ToString('0.0')) MB"
           } else {
-            Write-Error "Roster.exe not found"
+            Write-Error "dist/Roster/Roster.exe not found"
             exit 1
           }
+
+      - name: Package as Roster.zip (onedir folder → zip)
+        run: |
+          Push-Location dist
+          Compress-Archive -Path Roster -DestinationPath Roster.zip -CompressionLevel Optimal -Force
+          Pop-Location
+          $zipsize = (Get-Item dist/Roster.zip).Length / 1MB
+          Write-Host "✅ Roster.zip = $($zipsize.ToString('0.0')) MB"
 
       - name: Generate release tag
         id: tag
@@ -109,15 +117,16 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: "Latest Windows EXE Build"
+          name: "Latest Windows Build (onedir zip)"
           body: |
-            自動ビルドされた Windows 実行ファイル
+            自動ビルドされた Windows アプリ（onedir 形式）
 
             - ビルド日時: ${{ github.event.head_commit.timestamp }}
             - コミット: ${{ github.sha }}
-            - ファイル: `Roster.exe`
+            - ファイル: `Roster.zip` （展開すると Roster/Roster.exe ）
 
-            ダウンロードして直接実行できます。
-          files: dist/Roster.exe
+            zip を展開後、`Roster/Roster.exe` をダブルクリックで起動できます。
+            onefile 版に比べて起動が大幅に高速化されています。
+          files: dist/Roster.zip
           prerelease: false
           make_latest: true

@@ -15,7 +15,7 @@ from ..services import EmployeeService, PhotoService
 from ..services.update_service import (
     UpdateInfo,
     check_for_update,
-    download_exe,
+    download_asset,
     install_and_restart,
     is_frozen,
     current_build_sha,
@@ -53,7 +53,7 @@ class _DownloadThread(QThread):
 
     def run(self) -> None:
         try:
-            download_exe(
+            download_asset(
                 self._url, self._dest,
                 progress_cb=lambda w, t: self.progress.emit(w, t),
                 cancel_cb=lambda: self._cancel,
@@ -218,8 +218,11 @@ class MainWindow(QMainWindow):
         self._start_download(info)
 
     def _start_download(self, info: UpdateInfo) -> None:
+        # onedir 構成: sys.executable = <install>/Roster/Roster.exe
+        # 新しい zip は install_root 直下 (Roster/ と同階層) に保存する。
         current_exe = Path(sys.executable).resolve()
-        new_exe = current_exe.with_suffix(current_exe.suffix + ".new")
+        install_root = current_exe.parent.parent
+        new_zip = install_root / "Roster.zip"
 
         progress = QProgressDialog(
             "更新ファイルをダウンロード中…", "キャンセル", 0, 100, self
@@ -232,7 +235,7 @@ class MainWindow(QMainWindow):
         progress.setValue(0)
         progress.show()
 
-        thread = _DownloadThread(info.asset_url, new_exe, parent=self)
+        thread = _DownloadThread(info.asset_url, new_zip, parent=self)
         self._download_thread = thread
 
         def on_progress(written: int, total: int) -> None:
@@ -258,7 +261,7 @@ class MainWindow(QMainWindow):
                 return
             # 成功 → ヘルパ bat 起動して終了
             try:
-                install_and_restart(new_exe)
+                install_and_restart(new_zip)
             except Exception as e:  # noqa: BLE001
                 QMessageBox.critical(
                     self, "更新失敗",

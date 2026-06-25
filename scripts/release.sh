@@ -18,7 +18,7 @@ set -euo pipefail
 REPO_OWNER="hiroki077"
 REPO_NAME="Tanaka_project"
 RELEASE_TAG="latest"
-EXE_ASSET_NAME="Roster.exe"
+ASSET_NAME="Roster.zip"
 
 INCLUDE_DATA=true
 for arg in "$@"; do
@@ -45,21 +45,32 @@ ZIP_PATH="dist/Roster_dist_${TIMESTAMP}.zip"
 
 mkdir -p "$DIST_DIR"
 
-echo "📥 GitHub Release から最新の Windows EXE をダウンロードします..."
+echo "📥 GitHub Release から最新の Roster.zip (onedir) をダウンロードします..."
 gh release download "$RELEASE_TAG" \
   --repo "$REPO_OWNER/$REPO_NAME" \
-  --pattern "$EXE_ASSET_NAME" \
+  --pattern "$ASSET_NAME" \
   --dir "$DIST_DIR" \
   --clobber
 
-if [[ ! -f "$DIST_DIR/$EXE_ASSET_NAME" ]]; then
-  echo "❌ Roster.exe のダウンロードに失敗しました。" >&2
+if [[ ! -f "$DIST_DIR/$ASSET_NAME" ]]; then
+  echo "❌ $ASSET_NAME のダウンロードに失敗しました。" >&2
   echo "   ブラウザで Releases を確認してください:" >&2
   echo "   https://github.com/$REPO_OWNER/$REPO_NAME/releases" >&2
   exit 1
 fi
-EXE_SIZE="$(du -h "$DIST_DIR/$EXE_ASSET_NAME" | awk '{print $1}')"
-echo "✅ Roster.exe ダウンロード完了 ($EXE_SIZE)"
+ZIP_SIZE_RAW="$(du -h "$DIST_DIR/$ASSET_NAME" | awk '{print $1}')"
+echo "✅ $ASSET_NAME ダウンロード完了 ($ZIP_SIZE_RAW)"
+
+# zip を解凍 → DIST_DIR/Roster/ ができる
+echo "📂 解凍中..."
+unzip -q "$DIST_DIR/$ASSET_NAME" -d "$DIST_DIR"
+rm "$DIST_DIR/$ASSET_NAME"
+if [[ ! -f "$DIST_DIR/Roster/Roster.exe" ]]; then
+  echo "❌ 解凍後に Roster/Roster.exe が見つかりません。" >&2
+  exit 1
+fi
+APP_SIZE="$(du -sh "$DIST_DIR/Roster" | awk '{print $1}')"
+echo "✅ 解凍完了: Roster/ ($APP_SIZE)"
 
 # データフォルダの同梱（フォルダ名は ASCII で 'data' に統一）
 if $INCLUDE_DATA; then
@@ -98,4 +109,6 @@ echo "🎉 配布用 zip 完成: $ZIP_PATH ($ZIP_SIZE)"
 echo ""
 echo "次のステップ:"
 echo "  1. zip ファイルをクライアントに渡す（メール添付/USB/OneDrive 等）"
-echo "  2. クライアントは zip を展開して Roster.exe を起動"
+echo "  2. クライアントは zip を展開して Roster/Roster.exe を起動（onedir 構成）"
+echo "     ※ Roster.exe 単体を別フォルダにコピーしないでください（同フォルダ内の"
+echo "       _internal/ などが必要なため、起動できなくなります）"

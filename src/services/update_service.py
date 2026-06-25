@@ -1,15 +1,21 @@
-"""GitHub Releases を見て新しい Roster.exe があれば差し替える。
+"""GitHub Releases を見て新しい Roster (onedir zip) があれば差し替える。
 
 リポジトリは public 前提のため認証は不要。
 ローカル開発時（`__build_sha__` が空）はチェックを必ずスキップする。
+
+配布形式は --onedir 構成のフォルダを zip 化したもの（Roster.zip）。
+zip 内のルートに `Roster/` ディレクトリがあり、その中に Roster.exe + 依存
+ファイル一式が含まれる。
 """
 from __future__ import annotations
 import json
 import os
+import shutil
 import ssl
 import subprocess
 import sys
 import urllib.request
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -31,7 +37,8 @@ def _ssl_context() -> ssl.SSLContext:
 
 REPO_OWNER = "hiroki077"
 REPO_NAME = "Tanaka_project"
-ASSET_NAME = "Roster.exe"
+ASSET_NAME = "Roster.zip"
+APP_DIR_NAME = "Roster"  # zip 内のルートディレクトリ名 / インストール先のフォルダ名
 RELEASES_API = (
     f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
 )
@@ -88,7 +95,7 @@ def check_for_update() -> UpdateInfo | None:
     """最新リリースを取得し、現在のビルドより新しければ UpdateInfo を返す。
 
     開発実行（`__build_sha__` 空）の場合は常に None。
-    Roster.exe アセットが無い／SHA を読み取れない場合も None。
+    Roster.zip アセットが無い／SHA を読み取れない場合も None。
     """
     if not __build_sha__:
         return None
@@ -114,7 +121,7 @@ def check_for_update() -> UpdateInfo | None:
     return None
 
 
-def download_exe(
+def download_asset(
     url: str,
     dest: Path,
     progress_cb: Callable[[int, int], None] | None = None,
@@ -152,9 +159,22 @@ def download_exe(
             raise
 
 
-def install_and_restart(new_exe: Path) -> None:
-    """旧 exe を `new_exe` で差し替えて再起動するヘルパ bat を起動し、
-    現プロセスは即座に呼び出し元に戻る（呼び出し元が QApplication.quit()）。
+# 後方互換用エイリアス（古い main_window 等が呼んでいた場合のフォールバック）
+download_exe = download_asset
+
+
+def install_and_restart(downloaded_zip: Path) -> None:
+    """ダウンロードした Roster.zip を解凍し、フォルダ差し替え方式で再起動する。
+
+    onedir 構成では `sys.executable` が `<install>/Roster/Roster.exe` になる。
+    install_root = sys.executable.parent.parent。
+
+    手順:
+        1. zip を install_root/_roster_new に展開
+           → `_roster_new/Roster/` が出来る
+        2. updater.bat を install_root に書き出して起動
+        3. bat は親プロセス終了を待ち、`Roster/` を消して `_roster_new/Roster` を
+           `Roster/` にリネーム、新 exe を起動して自分自身を削除する
 
     Windows のみ。frozen でない場合は例外。
     """
@@ -162,19 +182,43 @@ def install_and_restart(new_exe: Path) -> None:
         raise RuntimeError("install_and_restart() は frozen ビルドでのみ使えます")
 
     current_exe = Path(sys.executable).resolve()
-    new_exe = Path(new_exe).resolve()
+    current_dir = current_exe.parent                 # <install>/Roster
+    install_root = current_dir.parent                # <install>
     pid = os.getpid()
-    bat_path = current_exe.parent / "_roster_updater.bat"
-    log_path = current_exe.parent / "_roster_updater.log"
 
-    # 旧 exe がロック解放されるまで最大 30 秒リトライ。
-    # 成功したら新 exe を起動して bat を自己削除。
+    # zip を解凍（旧解凍先が残っていたら一度消す）
+    extract_dir = install_root / "_roster_new"
+    if extract_dir.exists():
+        shutil.rmtree(extract_dir, ignore_errors=True)
+    extract_dir.mkdir(parents=True, exist_ok=True)
+
+    with zipfile.ZipFile(str(downloaded_zip), "r") as z:
+        z.extractall(str(extract_dir))
+
+    new_app_dir = extract_dir / APP_DIR_NAME
+    if not new_app_dir.is_dir():
+        raise RuntimeError(
+            f"展開先に {APP_DIR_NAME}/ ディレクトリが見つかりません: {new_app_dir}"
+        )
+
+    new_exe = new_app_dir / current_exe.name
+    if not new_exe.is_file():
+        raise RuntimeError(f"展開後に exe が見つかりません: {new_exe}")
+
+    bat_path = install_root / "_roster_updater.bat"
+    log_path = install_root / "_roster_updater.log"
+
+    # フォルダ差し替え手順を bat に書き出す。失敗時は最大 30 回（=30 秒）リトライ。
     bat_content = (
         "@echo off\r\n"
         "setlocal\r\n"
         f'set "PID={pid}"\r\n'
-        f'set "CUR={current_exe}"\r\n'
-        f'set "NEW={new_exe}"\r\n'
+        f'set "ROOT={install_root}"\r\n'
+        f'set "CUR_DIR={current_dir}"\r\n'
+        f'set "NEW_DIR={new_app_dir}"\r\n'
+        f'set "EXTRACT={extract_dir}"\r\n'
+        f'set "ZIP={downloaded_zip}"\r\n'
+        f'set "EXE={new_exe}"\r\n'
         f'set "LOG={log_path}"\r\n'
         'echo [%DATE% %TIME%] updater start pid=%PID% > "%LOG%"\r\n'
         ":wait_proc\r\n"
@@ -183,19 +227,28 @@ def install_and_restart(new_exe: Path) -> None:
         '  timeout /t 1 /nobreak >NUL\r\n'
         "  goto wait_proc\r\n"
         ")\r\n"
+        'timeout /t 1 /nobreak >NUL\r\n'
         "set RETRY=0\r\n"
-        ":do_move\r\n"
-        'move /Y "%NEW%" "%CUR%" >>"%LOG%" 2>&1\r\n'
-        "if errorlevel 1 (\r\n"
+        ":do_remove\r\n"
+        'rmdir /s /q "%CUR_DIR%" >>"%LOG%" 2>&1\r\n'
+        'if exist "%CUR_DIR%" (\r\n'
         "  set /a RETRY+=1\r\n"
         "  if %RETRY% GEQ 30 (\r\n"
-        '    echo move failed after retries >>"%LOG%"\r\n'
+        '    echo remove old folder failed >>"%LOG%"\r\n'
         "    exit /b 1\r\n"
         "  )\r\n"
         '  timeout /t 1 /nobreak >NUL\r\n'
-        "  goto do_move\r\n"
+        "  goto do_remove\r\n"
         ")\r\n"
-        'start "" "%CUR%"\r\n'
+        ":do_move\r\n"
+        'move "%NEW_DIR%" "%CUR_DIR%" >>"%LOG%" 2>&1\r\n'
+        "if errorlevel 1 (\r\n"
+        '  echo move failed >>"%LOG%"\r\n'
+        "  exit /b 1\r\n"
+        ")\r\n"
+        'rmdir /s /q "%EXTRACT%" >>"%LOG%" 2>&1\r\n'
+        'del "%ZIP%" >>"%LOG%" 2>&1\r\n'
+        'start "" "%CUR_DIR%\\Roster.exe"\r\n'
         '(goto) 2>nul & del "%~f0"\r\n'
     )
     bat_path.write_text(bat_content, encoding="cp932")
