@@ -20,6 +20,14 @@ DEFAULT_PHOTO_WIDTH_COLS = 4
 DEFAULT_PHOTO_HEIGHT_ROWS = 6
 DEFAULT_PHOTO_OFFSET_ROWS_UP = 8
 
+# トリミング枠の縦横比。実際の出力スロット（build_from_master の 5列×8行,
+# UNIFORM_COL_WIDTH=3.0, PHOTO_ROW_HEIGHT=13.13pt）をピクセル換算すると
+# 約 105:140 = 3:4 になるため、トリミング枠もこれに合わせて 3:4 にする。
+# 旧来 (4:6 = 2:3) のままだとトリミング後に Excel 側で横方向に引き伸ばされ
+# 写真がやや横長に見える違和感が出る。
+DEFAULT_CROP_ASPECT_W = 3
+DEFAULT_CROP_ASPECT_H = 4
+
 PLACEHOLDER_PATTERN = r"\{\{photo:([^}]+)\}\}"
 
 

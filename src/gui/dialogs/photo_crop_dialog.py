@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox, QMessageBox, QWidget, QSpinBox,
 )
 
-from ...config import DEFAULT_PHOTO_WIDTH_COLS, DEFAULT_PHOTO_HEIGHT_ROWS
+from ...config import DEFAULT_CROP_ASPECT_W, DEFAULT_CROP_ASPECT_H
 
 
 # 四隅ハンドルのヒット判定範囲（ビュー座標 px）
@@ -26,8 +26,8 @@ class _CropCanvas(QWidget):
 
     selectionChanged = Signal()
 
-    def __init__(self, parent=None, aspect_w: float = DEFAULT_PHOTO_WIDTH_COLS,
-                 aspect_h: float = DEFAULT_PHOTO_HEIGHT_ROWS):
+    def __init__(self, parent=None, aspect_w: float = DEFAULT_CROP_ASPECT_W,
+                 aspect_h: float = DEFAULT_CROP_ASPECT_H):
         super().__init__(parent)
         self.setMinimumSize(400, 400)
         self.setMouseTracking(True)
@@ -342,8 +342,8 @@ class PhotoCropDialog(QDialog):
         self,
         parent,
         source_path: Path,
-        aspect_w: float = DEFAULT_PHOTO_WIDTH_COLS,
-        aspect_h: float = DEFAULT_PHOTO_HEIGHT_ROWS,
+        aspect_w: float = DEFAULT_CROP_ASPECT_W,
+        aspect_h: float = DEFAULT_CROP_ASPECT_H,
     ):
         super().__init__(parent)
         self.setWindowTitle("写真をトリミング")
