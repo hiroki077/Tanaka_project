@@ -17,12 +17,14 @@ from pathlib import Path
 
 warnings.filterwarnings("ignore")
 
+from io import BytesIO
+
 from openpyxl import load_workbook, Workbook
 from openpyxl.drawing.image import Image as XLImage
 from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, TwoCellAnchor
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
-from PIL import Image as PILImage
+from PIL import Image as PILImage, ImageOps
 
 from ..config import Settings, DataPaths, PLACEHOLDER_PHOTO_PATH
 from ..db import Database, EmploymentStatus
@@ -168,6 +170,14 @@ def parse_master(path: Path) -> list[BranchData]:
             text = f.strip()
             if not BRANCH_RE.match(text):
                 current.top_positions.append((text, str(g).strip()))
+        elif g and (not isinstance(g, str) or g.strip()):
+            # F 空欄 + G 有り: 直前の役職ラベル(支店付/兼務)を継承して追加する。
+            # マスターで「支店付」が複数人ぶら下がる場合、2人目以降は F 空欄で
+            # 書かれることがあるため（例: 東京南の飯田）。
+            if current.top_positions:
+                prev_label = current.top_positions[-1][0].strip()
+                if prev_label in ("支店付", "兼務"):
+                    current.top_positions.append((prev_label, str(g).strip()))
 
         if i and isinstance(i, str):
             m = SECTION_RE.match(i.strip())
@@ -411,6 +421,9 @@ def _keep_side(side):
 
 
 _PHOTO_INSET_EMU = 28575  # 約 3 px。0 だと写真縁がセル境界に一致して青枠を覆い隠す
+# プレースホルダ画像は「写真なし」目印なので、セル領域いっぱいだと威圧感が強い。
+# 上下左右を大きくインセットして中央に小さく配置する（元の 60% 程度）。
+_PLACEHOLDER_INSET_EMU = 260000  # 約 27 px。実写真より一回り小さく見せる
 
 
 def _branch_title_font_size(name: str) -> int:
@@ -429,20 +442,71 @@ def _branch_title_font_size(name: str) -> int:
     return 16
 
 
-def _insert_photo(ws, col0_1: int, row0_1: int, w_cols: int, h_rows: int, path: Path) -> None:
-    """セル範囲にぴったり貼り付ける。img.width/height はあえてセットしない
-    （TwoCellAnchor がストレッチを担うため、px指定すると逆効果になる）。
+_CELL_TARGET_ASPECT = 3 / 4    # UNIFORM_COL_WIDTH=3.0 × 5列 と PHOTO_ROW_HEIGHT=13.13 × 8行 の縦横比
 
-    `_PHOTO_INSET_EMU` 分だけ内側にオフセットして、テンプレートの青枠が
-    写真下に隠れず4辺すべて見えるようにする。
+
+def _letterbox_bytes(path: Path, target_aspect: float,
+                     fill_color: tuple[int, int, int] = (255, 255, 255)) -> bytes:
+    """元画像を `target_aspect` (= 幅/高さ) に合わせて白余白でパディングした JPEG バイト列を返す。
+
+    元画像より横長なら 上下に、縦長なら 左右に 白余白を足す。
+    貼付先セル (TwoCellAnchor でストレッチされる) がその aspect である前提。
+    こうすれば cell と画像の aspect が一致するため、写真自体は歪まずに
+    セル全面を埋めることができる。
     """
-    img = XLImage(str(path))
+    with PILImage.open(str(path)) as im:
+        im = ImageOps.exif_transpose(im)
+        if im.mode not in ("RGB", "RGBA"):
+            im = im.convert("RGB")
+        w, h = im.size
+        if h <= 0 or w <= 0:
+            raise ValueError("invalid image size")
+        current_aspect = w / h
+        if abs(current_aspect - target_aspect) < 1e-3:
+            padded = im.convert("RGB")
+        elif current_aspect > target_aspect:
+            # 横長 → 上下にパディング
+            new_h = int(round(w / target_aspect))
+            padded = PILImage.new("RGB", (w, new_h), fill_color)
+            padded.paste(im.convert("RGB"), (0, (new_h - h) // 2))
+        else:
+            # 縦長 → 左右にパディング
+            new_w = int(round(h * target_aspect))
+            padded = PILImage.new("RGB", (new_w, h), fill_color)
+            padded.paste(im.convert("RGB"), ((new_w - w) // 2, 0))
+        buf = BytesIO()
+        padded.save(buf, format="JPEG", quality=92, optimize=True)
+        return buf.getvalue()
+
+
+def _insert_photo(ws, col0_1: int, row0_1: int, w_cols: int, h_rows: int, path: Path,
+                  *, is_placeholder: bool = False) -> None:
+    """セル範囲に貼り付ける。
+
+    - 実写真: 元画像を白余白でセル aspect (3:4) にパディングしてから貼り付ける
+      ことで、TwoCellAnchor のストレッチによる歪みをゼロにする。
+      フレームはセル全体を埋めたまま、写真は元の縦横比を保った状態で見える。
+    - プレースホルダ: アスペクト無視・シンプルに `_PLACEHOLDER_INSET_EMU` で
+      センター配置（元画像が正方形なので歪みは出ない）。
+    """
+    inset = _PLACEHOLDER_INSET_EMU if is_placeholder else _PHOTO_INSET_EMU
+
+    if is_placeholder:
+        img = XLImage(str(path))
+    else:
+        try:
+            data = _letterbox_bytes(path, _CELL_TARGET_ASPECT)
+            img = XLImage(BytesIO(data))
+        except Exception:
+            # 読めない/壊れている場合は素のファイルで貼る（歪み許容フォールバック）
+            img = XLImage(str(path))
+
     anchor = TwoCellAnchor(
         editAs="oneCell",
-        _from=AnchorMarker(col=col0_1 - 1, colOff=_PHOTO_INSET_EMU,
-                           row=row0_1 - 1, rowOff=_PHOTO_INSET_EMU),
-        to=AnchorMarker(col=col0_1 - 1 + w_cols, colOff=-_PHOTO_INSET_EMU,
-                        row=row0_1 - 1 + h_rows, rowOff=-_PHOTO_INSET_EMU),
+        _from=AnchorMarker(col=col0_1 - 1, colOff=inset,
+                           row=row0_1 - 1, rowOff=inset),
+        to=AnchorMarker(col=col0_1 - 1 + w_cols, colOff=-inset,
+                        row=row0_1 - 1 + h_rows, rowOff=-inset),
     )
     img.anchor = anchor
     ws.add_image(img)
@@ -546,9 +610,11 @@ def _draw_person_block(
             )
 
     img_to_use = photo_path if (photo_path and not is_on_leave) else PLACEHOLDER_PHOTO_PATH
+    is_placeholder = img_to_use is PLACEHOLDER_PHOTO_PATH
     if img_to_use and img_to_use.is_file():
         _insert_photo(ws, col_start_1, row_start_1,
-                      PERSON_COL_W - 1, PHOTO_ROWS, img_to_use)
+                      PERSON_COL_W - 1, PHOTO_ROWS, img_to_use,
+                      is_placeholder=is_placeholder)
     if is_on_leave:
         cell = ws.cell(row=row_start_1 + PHOTO_ROWS - 1, column=col_start_1,
                        value="休職中")
@@ -806,6 +872,62 @@ def _build_extra_persons(
     return row + PERSON_TOTAL_H + 1
 
 
+def _build_sa_and_extras(
+    ws,
+    row_start: int,
+    sa_label: str,
+    sa_persons: list[PersonEntry],
+    extras_persons: list[PersonEntry],
+    lookup_fn,
+) -> int:
+    """SA と 派遣・契約 を同じ写真行に並べる。
+
+    レイアウト: [SAラベル]  [SA人物1] [SA人物2] ...  [1スロット空白]  [契約/派遣1] [契約/派遣2] ...
+    """
+    if not sa_persons and not extras_persons:
+        return row_start
+
+    label_col_start = _slot_col(1)
+    label_col_end = _slot_content_end(label_col_start)
+    if sa_persons:
+        _label_box(ws, row_start, label_col_start, label_col_end,
+                   sa_label,
+                   size=12, bold=True,
+                   fill_color=COLOR_SUBHEADER_BG, text_color=COLOR_TEXT_WHITE,
+                   height=SECTION_HEADER_HEIGHT, left_thick=True)
+        row = row_start + 1
+        ws.row_dimensions[row].height = SPACER_HEIGHT
+        row += 1
+    else:
+        row = row_start
+        ws.row_dimensions[row].height = SPACER_HEIGHT
+        row += 1
+
+    slot = 1
+    for person in sa_persons:
+        emp, photo_path, is_on_leave, hidden = lookup_fn(person.name)
+        if hidden:
+            continue
+        col_start = _slot_col(slot)
+        _draw_person_block(ws, col_start, row, person, emp, photo_path, is_on_leave,
+                           show_year=False)
+        slot += 1
+
+    if extras_persons:
+        if sa_persons:
+            slot += 1   # SA との間に 1 スロット空ける
+        for person in extras_persons:
+            emp, photo_path, is_on_leave, hidden = lookup_fn(person.name)
+            if hidden:
+                continue
+            col_start = _slot_col(slot)
+            _draw_person_block(ws, col_start, row, person, emp, photo_path, is_on_leave,
+                               show_year=False)
+            slot += 1
+
+    return row + PERSON_TOTAL_H + 1
+
+
 def build_workbook(
     branches: list[BranchData],
     employee_service: EmployeeService,
@@ -957,27 +1079,40 @@ def build_workbook(
             section_photo_rows[section_name] = photo_starts
 
         # 支店の場合のみ、IA / 派遣・契約 / SA セクションをページ下部に集約配置。
-        # 契約社員（keiyaku）と派遣社員（haken）はマスター上隣接列で管理されており、
-        # 同じ右枠グループとして扱う。SA セクションの直上に「ラベルなしブロック」として
-        # 統合配置し、表示順は契約社員 → 派遣社員 の順。
+        # クライアント要望: 派遣・契約のうち「営業課所属」だけ SA の写真行に、
+        # SA の右 1 スロット空けて並べる。設計課所属など それ以外の派遣・契約は
+        # 以前どおり SA の 1 段上にラベルなしブロックとしてまとめて配置。
         # 部 (技術部・事業推進部) は per-課 実務職セクション内で派遣も既に表示するため
         # branch-level の haken/keiyaku 配置はスキップ。
         if not is_dept:
             ia_persons, non_ia_jimu = _split_ia(branch.jimu, lookup)
             if ia_persons:
                 row = _build_extra_persons(ws, row, "IA", ia_persons, lookup)
-            non_regular = list(branch.keiyaku) + list(branch.haken)
-            if non_regular:
-                # 派遣・契約はラベル見出しを出さず、写真行のみで配置する
-                row = _build_extra_persons(ws, row, "派遣・契約",
-                                            non_regular, lookup,
-                                            show_title=False)
-            # SA セクションには事務(jimu) のみを残す（契約社員は上の統合ブロックへ）
             sa_persons = non_ia_jimu
-            if sa_persons:
-                row = _build_extra_persons(ws, row,
+
+            # 営業課の CourseRow に紐づいた 派遣/契約 を抽出
+            sales_extra_ids: set[int] = set()
+            for section_name, course_rows in branch.sections.items():
+                if section_name != "営業課":
+                    continue
+                for cr in course_rows:
+                    for p in cr.keiyaku:
+                        sales_extra_ids.add(id(p))
+                    for p in cr.haken:
+                        sales_extra_ids.add(id(p))
+            all_extras = list(branch.keiyaku) + list(branch.haken)
+            sales_extras = [p for p in all_extras if id(p) in sales_extra_ids]
+            other_extras = [p for p in all_extras if id(p) not in sales_extra_ids]
+
+            if other_extras:
+                # 設計課などの 派遣・契約 → 従来どおり SA の 1 段上にラベルなしで配置
+                row = _build_extra_persons(ws, row, "派遣・契約",
+                                            other_extras, lookup,
+                                            show_title=False)
+            if sa_persons or sales_extras:
+                row = _build_sa_and_extras(ws, row,
                                             _jimu_label(branch.branch_name),
-                                            sa_persons, lookup)
+                                            sa_persons, sales_extras, lookup)
 
     return wb, stats
 

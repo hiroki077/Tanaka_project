@@ -72,9 +72,10 @@ fi
 APP_SIZE="$(du -sh "$DIST_DIR/Roster" | awk '{print $1}')"
 echo "✅ 解凍完了: Roster/ ($APP_SIZE)"
 
-# 配布フォルダ直下に「Roster起動.bat」を作成して、ユーザがどの exe を
+# 配布フォルダ直下にランチャ bat を作成して、ユーザがどの exe を
 # 起動すればよいか迷わないようにする。bat は同階層の Roster/Roster.exe を呼ぶだけ。
-LAUNCHER_NAME='Roster起動.bat'
+# 名前は ASCII で統一（日本語 Windows での zip 解凍時の文字化け回避）
+LAUNCHER_NAME='Start_Roster.bat'
 printf '@echo off\r\nstart "" "%%~dp0Roster\\Roster.exe"\r\n' > "$DIST_DIR/$LAUNCHER_NAME"
 echo "✅ ランチャ作成: $LAUNCHER_NAME"
 
@@ -115,7 +116,7 @@ echo "🎉 配布用 zip 完成: $ZIP_PATH ($ZIP_SIZE)"
 echo ""
 echo "次のステップ:"
 echo "  1. zip ファイルをクライアントに渡す（メール添付/USB/OneDrive 等）"
-echo "  2. クライアントは zip を展開して、直下の「Roster起動.bat」を"
+echo "  2. クライアントは zip を展開して、直下の「Start_Roster.bat」を"
 echo "     ダブルクリックで起動。bat が中の Roster.exe を呼び出す。"
 echo "  ※ Roster.exe 単体を別フォルダにコピーしないでください（同フォルダ内の"
 echo "     _internal/ などが必要なため、起動できなくなります）"

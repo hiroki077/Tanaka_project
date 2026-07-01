@@ -295,10 +295,18 @@ def install_and_restart(downloaded_zip: Path) -> None:
     )
     bat_path.write_text(bat_content, encoding="cp932")
 
-    # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP で親終了に追従させない
-    DETACHED_PROCESS = 0x00000008
+    # CREATE_NO_WINDOW + CREATE_NEW_PROCESS_GROUP:
+    # GUI アプリ (Roster.exe) はコンソールを持たないため、DETACHED_PROCESS だと
+    # 起動された cmd 配下の tasklist/findstr が個別のコンソール窓を作ってしまう
+    # 現象があった。CREATE_NO_WINDOW なら cmd 自身も配下の子プロセスも
+    # 完全に不可視になる。念のため STARTUPINFO でも SW_HIDE を指定する。
+    CREATE_NO_WINDOW = 0x08000000
+    si = subprocess.STARTUPINFO()
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    si.wShowWindow = subprocess.SW_HIDE
     subprocess.Popen(
         ["cmd", "/c", str(bat_path)],
-        creationflags=DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+        creationflags=CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
+        startupinfo=si,
         close_fds=True,
     )
