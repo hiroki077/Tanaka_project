@@ -443,68 +443,72 @@ def _branch_title_font_size(name: str) -> int:
     return 16
 
 
-# Excel の col_width 3.0 が Meiryo/游ゴシック環境で実描画される px 幅の近似値。
-# 元コメントの Calibri 前提 21px は日本語環境の実測とズレるため、25px 前後で運用。
-# アスペクト計算自体には使わない（OneCellAnchor で寸法固定するため）が、
-# センタリング用の h_off 算出に用いる。
-_ASSUMED_COL_WIDTH_PX = 25
+# Excel の実描画セル比 (幅 / 高さ) の想定値。openpyxl 既定フォントは Calibri だが、
+# 日本語環境では実際に Meiryo/游ゴシック で描画されるため、cell 幅が計算より広くなり
+# aspect は 0.75 (3:4) より横広がりになる傾向。0.9 前後で運用する。
+_TARGET_CELL_ASPECT = 0.9
+
+
+def _letterbox_bytes(path: Path, target_aspect: float,
+                     fill_color: tuple[int, int, int] = (255, 255, 255)) -> bytes:
+    """元画像を `target_aspect` (= 幅/高さ) に合わせて白余白で拡張した JPEG バイト列。
+
+    元画像より横長キャンバスなら 左右に、縦長キャンバスなら 上下に白余白を足す。
+    こうすれば TwoCellAnchor でストレッチされても写真部分の縦横比が保たれる。
+    """
+    with PILImage.open(str(path)) as im:
+        im = ImageOps.exif_transpose(im)
+        if im.mode not in ("RGB", "RGBA"):
+            im = im.convert("RGB")
+        w, h = im.size
+        if h <= 0 or w <= 0:
+            raise ValueError("invalid image size")
+        current_aspect = w / h
+        if abs(current_aspect - target_aspect) < 1e-3:
+            padded = im.convert("RGB")
+        elif current_aspect > target_aspect:
+            # 元より縦長のキャンバス → 上下にパディング
+            new_h = int(round(w / target_aspect))
+            padded = PILImage.new("RGB", (w, new_h), fill_color)
+            padded.paste(im.convert("RGB"), (0, (new_h - h) // 2))
+        else:
+            # 元より横長のキャンバス → 左右にパディング
+            new_w = int(round(h * target_aspect))
+            padded = PILImage.new("RGB", (new_w, h), fill_color)
+            padded.paste(im.convert("RGB"), ((new_w - w) // 2, 0))
+        buf = BytesIO()
+        padded.save(buf, format="JPEG", quality=92, optimize=True)
+        return buf.getvalue()
 
 
 def _insert_photo(ws, col0_1: int, row0_1: int, w_cols: int, h_rows: int, path: Path,
                   *, is_placeholder: bool = False) -> None:
     """セル範囲に貼り付ける。
 
-    - 実写真: OneCellAnchor で写真の EMU 寸法を明示指定し、元アスペクト比を厳密に保つ。
-      高さは row_height (pt) から正確に EMU 変換できるので、
-      `photo_h = 8行 × 13.13pt` を基準に `photo_w = photo_h × aspect` で決定する。
-      Excel のセル幅解釈に依存しないため、フォント設定が違う環境でも歪まない。
+    - 実写真: 元画像を白余白でセルアスペクト (`_TARGET_CELL_ASPECT`) にパディングした
+      キャンバスを TwoCellAnchor でセル全面に貼付。TwoCellAnchor が自動で
+      セル中央にストレッチするため、写真部分は自然に中央寄せされる。写真自身の
+      アスペクト比はパディング分だけ余白として残るため歪まない。
     - プレースホルダ: これまで通り TwoCellAnchor で 60% 相当のインセット中央配置。
     """
+    inset = _PLACEHOLDER_INSET_EMU if is_placeholder else _PHOTO_INSET_EMU
+
     if is_placeholder:
         img = XLImage(str(path))
-        inset = _PLACEHOLDER_INSET_EMU
-        anchor = TwoCellAnchor(
-            editAs="oneCell",
-            _from=AnchorMarker(col=col0_1 - 1, colOff=inset,
-                               row=row0_1 - 1, rowOff=inset),
-            to=AnchorMarker(col=col0_1 - 1 + w_cols, colOff=-inset,
-                            row=row0_1 - 1 + h_rows, rowOff=-inset),
-        )
-        img.anchor = anchor
-        ws.add_image(img)
-        return
+    else:
+        try:
+            data = _letterbox_bytes(path, _TARGET_CELL_ASPECT)
+            img = XLImage(BytesIO(data))
+        except Exception:
+            # 画像読み込み失敗時のフォールバック
+            img = XLImage(str(path))
 
-    # 実写真: 元アスペクト比を厳密に保つため OneCellAnchor + XDRPositiveSize2D
-    try:
-        with PILImage.open(str(path)) as pil:
-            pil_fixed = ImageOps.exif_transpose(pil)
-            pw, ph = pil_fixed.size
-        photo_aspect = pw / ph if ph > 0 else 3 / 4
-    except Exception:
-        photo_aspect = 3 / 4
-
-    # セル高さ EMU (pt → EMU は正確: 1 pt = 12700 EMU)
-    cell_h_emu = int(h_rows * PHOTO_ROW_HEIGHT * 12700)
-    inner_v_margin = _PHOTO_INSET_EMU
-    photo_h_emu = cell_h_emu - 2 * inner_v_margin
-    photo_w_emu = int(photo_h_emu * photo_aspect)
-
-    # セル幅の推定 EMU（センタリング目的のみ）
-    est_cell_w_emu = w_cols * _ASSUMED_COL_WIDTH_PX * 9525
-    # 万一 photo_w が推定セル幅を超えるなら、幅にフィットさせ高さも縮める
-    max_photo_w = est_cell_w_emu - 2 * _PHOTO_INSET_EMU
-    if photo_w_emu > max_photo_w:
-        photo_w_emu = max_photo_w
-        photo_h_emu = int(photo_w_emu / photo_aspect)
-
-    v_off = (cell_h_emu - photo_h_emu) // 2
-    h_off = max(_PHOTO_INSET_EMU, (est_cell_w_emu - photo_w_emu) // 2)
-
-    img = XLImage(str(path))
-    anchor = OneCellAnchor(
-        _from=AnchorMarker(col=col0_1 - 1, colOff=h_off,
-                           row=row0_1 - 1, rowOff=v_off),
-        ext=XDRPositiveSize2D(cx=photo_w_emu, cy=photo_h_emu),
+    anchor = TwoCellAnchor(
+        editAs="oneCell",
+        _from=AnchorMarker(col=col0_1 - 1, colOff=inset,
+                           row=row0_1 - 1, rowOff=inset),
+        to=AnchorMarker(col=col0_1 - 1 + w_cols, colOff=-inset,
+                        row=row0_1 - 1 + h_rows, rowOff=-inset),
     )
     img.anchor = anchor
     ws.add_image(img)
@@ -640,13 +644,11 @@ def _draw_person_block(
                 kana, size=10, color=COLOR_TEXT_KANA, align="center")
 
     # 漢字: 11pt **非ボールド** #111111。役職記号は基本除去するが「兼)」だけは残す。
-    # 「兼)」が付く時は中央寄せだと記号がスロット中央に来てしまい不自然なので、
-    # わずかに左寄せ (horizontal="left") にしてラベル先頭から開始するよう揃える。
+    # 兼務有無に関わらず中央寄せ（クライアント要望）。
     display_name = _person_display_name(person, emp)
-    name_align = "left" if display_name.startswith("兼)") else "center"
     _label_text(ws, label_row_kanji, col_start_1, photo_col_end,
                 display_name,
-                size=11, bold=False, color=COLOR_TEXT_KANJI, align=name_align)
+                size=11, bold=False, color=COLOR_TEXT_KANJI, align="center")
 
     # 年: show_year=True かつ値がある時のみ書き込み。「再」は除去
     # force_blank_year=True なら、枠（border_rows）には年行が含まれるが、

@@ -74,6 +74,19 @@ class Database:
         Base.metadata.create_all(self.engine)
         self._migrate_drop_org_columns()
         self._migrate_add_new_columns()
+        self._migrate_status_transferred_label()
+
+    def _migrate_status_transferred_label(self) -> None:
+        """旧ラベル「移動」で保存されている status を「異動」に置換する。
+
+        v0.3 以前は EmploymentStatus.TRANSFERRED を「移動」で保存していた。
+        v0.4 で正しい漢字「異動」に修正したため、既存 DB を書き換える。
+        """
+        with self.engine.connect() as conn:
+            conn.exec_driver_sql(
+                "UPDATE employees SET status = '異動' WHERE status = '移動'"
+            )
+            conn.commit()
 
     def _migrate_add_new_columns(self) -> None:
         """既存DBに新規カラムを追加し、reference_name を match_key に統合する。"""

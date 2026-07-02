@@ -13,7 +13,7 @@ class EmploymentStatus(StrEnum):
     ACTIVE = "在職"
     ON_LEAVE = "休職中"
     RESIGNED = "退職"
-    TRANSFERRED = "移動"
+    TRANSFERRED = "異動"
 
 
 class Employee(Base):
