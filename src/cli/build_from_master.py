@@ -21,7 +21,8 @@ from io import BytesIO
 
 from openpyxl import load_workbook, Workbook
 from openpyxl.drawing.image import Image as XLImage
-from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, TwoCellAnchor
+from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, OneCellAnchor, TwoCellAnchor
+from openpyxl.drawing.xdr import XDRPositiveSize2D
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from PIL import Image as PILImage, ImageOps
@@ -442,71 +443,68 @@ def _branch_title_font_size(name: str) -> int:
     return 16
 
 
-_CELL_TARGET_ASPECT = 3 / 4    # UNIFORM_COL_WIDTH=3.0 × 5列 と PHOTO_ROW_HEIGHT=13.13 × 8行 の縦横比
-
-
-def _letterbox_bytes(path: Path, target_aspect: float,
-                     fill_color: tuple[int, int, int] = (255, 255, 255)) -> bytes:
-    """元画像を `target_aspect` (= 幅/高さ) に合わせて白余白でパディングした JPEG バイト列を返す。
-
-    元画像より横長なら 上下に、縦長なら 左右に 白余白を足す。
-    貼付先セル (TwoCellAnchor でストレッチされる) がその aspect である前提。
-    こうすれば cell と画像の aspect が一致するため、写真自体は歪まずに
-    セル全面を埋めることができる。
-    """
-    with PILImage.open(str(path)) as im:
-        im = ImageOps.exif_transpose(im)
-        if im.mode not in ("RGB", "RGBA"):
-            im = im.convert("RGB")
-        w, h = im.size
-        if h <= 0 or w <= 0:
-            raise ValueError("invalid image size")
-        current_aspect = w / h
-        if abs(current_aspect - target_aspect) < 1e-3:
-            padded = im.convert("RGB")
-        elif current_aspect > target_aspect:
-            # 横長 → 上下にパディング
-            new_h = int(round(w / target_aspect))
-            padded = PILImage.new("RGB", (w, new_h), fill_color)
-            padded.paste(im.convert("RGB"), (0, (new_h - h) // 2))
-        else:
-            # 縦長 → 左右にパディング
-            new_w = int(round(h * target_aspect))
-            padded = PILImage.new("RGB", (new_w, h), fill_color)
-            padded.paste(im.convert("RGB"), ((new_w - w) // 2, 0))
-        buf = BytesIO()
-        padded.save(buf, format="JPEG", quality=92, optimize=True)
-        return buf.getvalue()
+# Excel の col_width 3.0 が Meiryo/游ゴシック環境で実描画される px 幅の近似値。
+# 元コメントの Calibri 前提 21px は日本語環境の実測とズレるため、25px 前後で運用。
+# アスペクト計算自体には使わない（OneCellAnchor で寸法固定するため）が、
+# センタリング用の h_off 算出に用いる。
+_ASSUMED_COL_WIDTH_PX = 25
 
 
 def _insert_photo(ws, col0_1: int, row0_1: int, w_cols: int, h_rows: int, path: Path,
                   *, is_placeholder: bool = False) -> None:
     """セル範囲に貼り付ける。
 
-    - 実写真: 元画像を白余白でセル aspect (3:4) にパディングしてから貼り付ける
-      ことで、TwoCellAnchor のストレッチによる歪みをゼロにする。
-      フレームはセル全体を埋めたまま、写真は元の縦横比を保った状態で見える。
-    - プレースホルダ: アスペクト無視・シンプルに `_PLACEHOLDER_INSET_EMU` で
-      センター配置（元画像が正方形なので歪みは出ない）。
+    - 実写真: OneCellAnchor で写真の EMU 寸法を明示指定し、元アスペクト比を厳密に保つ。
+      高さは row_height (pt) から正確に EMU 変換できるので、
+      `photo_h = 8行 × 13.13pt` を基準に `photo_w = photo_h × aspect` で決定する。
+      Excel のセル幅解釈に依存しないため、フォント設定が違う環境でも歪まない。
+    - プレースホルダ: これまで通り TwoCellAnchor で 60% 相当のインセット中央配置。
     """
-    inset = _PLACEHOLDER_INSET_EMU if is_placeholder else _PHOTO_INSET_EMU
-
     if is_placeholder:
         img = XLImage(str(path))
-    else:
-        try:
-            data = _letterbox_bytes(path, _CELL_TARGET_ASPECT)
-            img = XLImage(BytesIO(data))
-        except Exception:
-            # 読めない/壊れている場合は素のファイルで貼る（歪み許容フォールバック）
-            img = XLImage(str(path))
+        inset = _PLACEHOLDER_INSET_EMU
+        anchor = TwoCellAnchor(
+            editAs="oneCell",
+            _from=AnchorMarker(col=col0_1 - 1, colOff=inset,
+                               row=row0_1 - 1, rowOff=inset),
+            to=AnchorMarker(col=col0_1 - 1 + w_cols, colOff=-inset,
+                            row=row0_1 - 1 + h_rows, rowOff=-inset),
+        )
+        img.anchor = anchor
+        ws.add_image(img)
+        return
 
-    anchor = TwoCellAnchor(
-        editAs="oneCell",
-        _from=AnchorMarker(col=col0_1 - 1, colOff=inset,
-                           row=row0_1 - 1, rowOff=inset),
-        to=AnchorMarker(col=col0_1 - 1 + w_cols, colOff=-inset,
-                        row=row0_1 - 1 + h_rows, rowOff=-inset),
+    # 実写真: 元アスペクト比を厳密に保つため OneCellAnchor + XDRPositiveSize2D
+    try:
+        with PILImage.open(str(path)) as pil:
+            pil_fixed = ImageOps.exif_transpose(pil)
+            pw, ph = pil_fixed.size
+        photo_aspect = pw / ph if ph > 0 else 3 / 4
+    except Exception:
+        photo_aspect = 3 / 4
+
+    # セル高さ EMU (pt → EMU は正確: 1 pt = 12700 EMU)
+    cell_h_emu = int(h_rows * PHOTO_ROW_HEIGHT * 12700)
+    inner_v_margin = _PHOTO_INSET_EMU
+    photo_h_emu = cell_h_emu - 2 * inner_v_margin
+    photo_w_emu = int(photo_h_emu * photo_aspect)
+
+    # セル幅の推定 EMU（センタリング目的のみ）
+    est_cell_w_emu = w_cols * _ASSUMED_COL_WIDTH_PX * 9525
+    # 万一 photo_w が推定セル幅を超えるなら、幅にフィットさせ高さも縮める
+    max_photo_w = est_cell_w_emu - 2 * _PHOTO_INSET_EMU
+    if photo_w_emu > max_photo_w:
+        photo_w_emu = max_photo_w
+        photo_h_emu = int(photo_w_emu / photo_aspect)
+
+    v_off = (cell_h_emu - photo_h_emu) // 2
+    h_off = max(_PHOTO_INSET_EMU, (est_cell_w_emu - photo_w_emu) // 2)
+
+    img = XLImage(str(path))
+    anchor = OneCellAnchor(
+        _from=AnchorMarker(col=col0_1 - 1, colOff=h_off,
+                           row=row0_1 - 1, rowOff=v_off),
+        ext=XDRPositiveSize2D(cx=photo_w_emu, cy=photo_h_emu),
     )
     img.anchor = anchor
     ws.add_image(img)
